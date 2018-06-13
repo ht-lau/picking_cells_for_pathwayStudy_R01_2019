@@ -1,13 +1,11 @@
 ---
 title: "Selection of CCLE based on the sum expression of signaling components"
-output: 
+output: html_notebook
 ---
 
 In the previous script, I determined that the sums normalized expression gene expression from each signaling pathway is probably the easiest way to choose what cell lines to use. The outliner cell lines can be identified using the box plot. Basically, the cell lines with a sum expression value higher than 75% quantile + 1.5 * IQR. 
 
-This script is for selecting the cells automatically (less manually...).
-
-Followings are the signaling pathways chosen. Anything without description were not worked on, but is in the R01 proposal. 
+Followings are the signaling pathways chosen. Any pathways labeled as NA is not found in Reactome, but is in the original R01 proposal. These pathways are labeled as "Reactome".
 
 EGF: Signal Transduction, Signaling by RTKs, Signaling by EGFR
 FGF: Signal Transduction, Signaling by RTKs, Signaling by FGFR
@@ -25,14 +23,17 @@ Glucose: Signal Transduction, Signaling by RTK, Signaling by Insulin receptor
 Oxygen: Cell. responses to ext. stimuli, Cell. response to stress, hypoxia
 PPMs/ECM: Extracellular matrix organization, Integrin cell surface interactions
 
-```{r packages, message=FALSE}
+The oncogenic pathways from Sanchez-Vega et. al. (2018) (PMID: 29625050) were also included in this version of the report. These are labeled as "TCGA"
+
+```{r packages, message=FALSE, echo=FALSE}
 library(tidyverse)
 library(ggthemes)
 library(ggpubr)
 library(readxl)
+library(qdapTools)  # required to turn the gene.list into df, list2df()
 ```
 
-```{r reactome gene list + TCGA oncogenes}
+```{r reactome gene list + TCGA oncogenes, echo=FALSE}
 ########
 # can skip, if I am doing the same thing, there is a break point at 
 # {r match the signaling component and calculate the sum of expressions}
@@ -81,7 +82,7 @@ names(gene.list) <- str_c("Reactome.", names(gene.list))
 ```
 
 
-```{r this is the TCGA list}
+```{r this is the TCGA list, echo=FALSE}
 
 ################################################################
 # import of the TCGA data
@@ -108,7 +109,22 @@ names(tcga.gene.list) <- str_c("TCGA.", SanchezVega.pathways)
 gene.list <- c(gene.list, tcga.gene.list)
 ```
 
-```{r match the signaling component and calculate the sum of expressions}
+There are 1326 genes in total (with duplcations) or 940 (without duplication).
+```{r plotting the pathways, echo=FALSE}
+
+gene.list.long <- list2df(gene.list)
+names(gene.list.long)[1:2] <- c("Gene.names", "Pathways")
+gene.list.long <- gene.list.long %>% separate(Pathways, into = c("Sources", "Pathways"), sep = "\\.")
+
+ggplot(gene.list.long) +
+  geom_bar(mapping = aes(x = Pathways)) +
+  facet_wrap(~ Sources) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+```
+
+
+```{r match the signaling component and calculate the sum of expressions, echo=FALSE}
 ########
 # this part save the output, so I don't have to re-load the big data frame again
 ########
@@ -144,20 +160,19 @@ sum.gene.expression <- lapply(ccle.pathways, function(x) data.frame(Sums = colSu
 save(sum.gene.expression, file = "sum_of_expression.RData")
 ```
 
-```{r loading saved R data}
+```{r loading saved R data, echo=FALSE}
 
 load("sum_of_expression.RData")
 ```
 
 
-```{r calculate cut off and pick cell lines}
+```{r calculate cut off and pick cell lines, echo=FALSE}
 # I want to pick the cut off base on the boxplot, 
 # the whisker of the boxplot is 75 % quantile + 1.5 * IQR
 
 # write a function to calculate the cut off for each pathway for picking the cells
 cal.cut.off <- function(x) {
-  #cut.off <- quantile(x[1][,1], 0.75) + 1.5 * IQR(x[1][,1])
-  cut.off <- quantile(x[1][,1], 0.95)
+  cut.off <- quantile(x[1][,1], 0.75) + 1.5 * IQR(x[1][,1])
 }
 
 # make the list containing the cut off values 
@@ -189,18 +204,32 @@ for (i in 1:21) {
   cells.list[[i]] <- select(cells.list[[i]], Cells = 3, 2)
 }
 
+# reduce repeat the function in a sequential manner, until it finished the list, I think
+# the input is a list, then I added the function with 2 inputs and run full_join()
 cells.list <- reduce(cells.list, function(df1, df2) full_join(df1, df2, by = "Cells"))
 
+# use str_split, because I can choose how many items the original string will be splitting into
+temp <- str_split(string = cells.list$Cells, pattern = "_", n = 2)
+temp <- data.frame(matrix(unlist(temp), ncol = 2, byrow = TRUE))
+colnames(temp)[1:2] <- c("Cell.lines", "Tissues")
+cells.list <- cbind(temp, cells.list[, 2:22])
+```
 
-BICR22_UPPER_AERODIGESTIVE_TRACT
+And there are 500 cell lines from 23 tissue types
+```{r plotting cells data, echo=FALSE}
+
+ggplot(cells.list) +
+  geom_bar(mapping = aes(x = Tissues, fill = Tissues)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  guides(fill=FALSE)
+
 ```
 
 
-
-```{r select cells and data visualisation}
+```{r select cells and data visualisation, echo=FALSE}
 
 # take EGF signaling out, I want to use it as an example to show the way we select cells
-egf <- sum.gene.expression$Reactome.ESR
+egf <- sum.gene.expression$Reactome.EGFR
 
 # add a column just for the plotting
 egf$xaxis <- 1:nrow(egf) 
@@ -221,7 +250,7 @@ box <- ggboxplot(egf, x = "box.axis", y = "Sums",
                  alpha = 0.5, 
                  fill = "grey") + clean_theme()
 
-x <- ggarrange(scatter.plot, box,
+ggarrange(scatter.plot, box,
           ncol = 2, align = "h",
           widths = c(9, 1), heights = c(1,1),
           common.legend = TRUE)
