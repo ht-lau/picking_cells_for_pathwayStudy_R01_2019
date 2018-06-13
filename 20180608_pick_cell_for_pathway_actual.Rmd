@@ -1,0 +1,230 @@
+---
+title: "Selection of CCLE based on the sum expression of signaling components"
+output: 
+---
+
+In the previous script, I determined that the sums normalized expression gene expression from each signaling pathway is probably the easiest way to choose what cell lines to use. The outliner cell lines can be identified using the box plot. Basically, the cell lines with a sum expression value higher than 75% quantile + 1.5 * IQR. 
+
+This script is for selecting the cells automatically (less manually...).
+
+Followings are the signaling pathways chosen. Anything without description were not worked on, but is in the R01 proposal. 
+
+EGF: Signal Transduction, Signaling by RTKs, Signaling by EGFR
+FGF: Signal Transduction, Signaling by RTKs, Signaling by FGFR
+HGF: Signal Transduction, Signaling by RTKs, Signaling by MET
+CXCL12: 
+TNFa, 
+TGFb: Signal Transduction, Signaling by TGF-beta, Signaling by TGF-beta receptor
+IL6: Immune Sys, Cytokine Signaling, Signaling by IL, IL-6
+WNTs: Signal Transduction, Signaling by WNT, TCF dependent signaling in response to WNT
+SHH: Signal Transduction, Signaling by Hedgehog
+Estrogen: Signal Transduction, Signaling by NR, ESR-mediated signaling
+Testosterone, 
+Glutamine, 
+Glucose: Signal Transduction, Signaling by RTK, Signaling by Insulin receptor
+Oxygen: Cell. responses to ext. stimuli, Cell. response to stress, hypoxia
+PPMs/ECM: Extracellular matrix organization, Integrin cell surface interactions
+
+```{r packages, message=FALSE}
+library(tidyverse)
+library(ggthemes)
+library(ggpubr)
+library(readxl)
+```
+
+```{r reactome gene list + TCGA oncogenes}
+########
+# can skip, if I am doing the same thing, there is a break point at 
+# {r match the signaling component and calculate the sum of expressions}
+########
+
+
+# this part deal with the data I downloaded from the Reactome.
+# Mainly, I want to extract the genes involved in each pathway.
+# This will produce a list that I can use to match with the CCLE expression data
+
+# There is also a paper published from TCGA looking at the 
+
+
+# read the files containing the signaling components into a list
+signaling.files <- list.files(path = "signaling_genes", pattern = "by_",
+                              full.names = TRUE)            # full name extract the path
+
+# use the file list created above to read the files into a list of df
+# this dfs contain the data from reactome, which have to clean up further to extract the genes
+gene.list <- lapply(signaling.files, read.delim, header = TRUE, stringsAsFactors = FALSE)
+
+# extract the pathway names from the file list
+pathway.names <- lapply(signaling.files, str_sub, 20, -5)
+
+# add pathway names back to the file list
+names(gene.list) <- pathway.names
+
+
+############################################################
+# The gene.list contains a lot of information that I don't need from the Reactome.
+# So write a function to clean it up.
+############################################################
+
+extract.genes <- function(x, MoleculeType, MoleculeName) {
+  x <- x %>% 
+    filter(MoleculeType == "Proteins") %>% 
+    separate(MoleculeName, into = c("Uniprot", "Gene.names"), sep = " ")
+  x <- x[!duplicated(x$Gene.names), ]
+  x <- x$Gene.names
+}
+
+# clean up the gene list with the new function
+gene.list <- lapply(gene.list, FUN = extract.genes)
+names(gene.list) <- str_c("Reactome.", names(gene.list))
+
+```
+
+
+```{r this is the TCGA list}
+
+################################################################
+# import of the TCGA data
+################################################################
+
+# an excel sheet, I only need the column 1 and 2, which are the pathways and genes, respectively 
+SanchezVega <- read_excel("FigS3_SanchezVega_Cell.xlsx", sheet = "Pathways") %>%
+  select(1:2)
+
+# make a vectors containing the name of the pathways
+SanchezVega.pathways <- SanchezVega$Pathway[!duplicated(SanchezVega$Pathway)]
+
+# i want to create a list of vector containing the pathway components
+tcga.gene.list <- list() # make an empty list 1st
+for (n in 1:length(SanchezVega.pathways)) {
+  tcga.gene.list[[n]] <- SanchezVega$Gene[SanchezVega$Pathway == SanchezVega.pathways[n]]
+}
+names(tcga.gene.list) <- str_c("TCGA.", SanchezVega.pathways)
+
+##########################
+# combine the TCGA and Reactome list
+##########################
+
+gene.list <- c(gene.list, tcga.gene.list)
+```
+
+```{r match the signaling component and calculate the sum of expressions}
+########
+# this part save the output, so I don't have to re-load the big data frame again
+########
+
+# import the previously produced normalized CCLE expression data
+nor.ccle <- read.delim("Normalized_CCLE_RNAseq.txt", header = TRUE, stringsAsFactors = FALSE)
+
+
+# create a new list to whole the list of df with pathway component expression values
+ccle.pathways <- list()
+
+# match the whole CCLE expression data with the list containing pathway components
+# then add Ensembl IDs as the gene names
+for (i in 1:length(gene.list)) {
+  ccle.pathways[[i]] <- nor.ccle[nor.ccle$Gene.names %in% gene.list[[i]],]
+  row.names(ccle.pathways[[i]]) <- ccle.pathways[[i]][,1]
+}
+
+# rename of the dfs in the list with each respective signaling pathway
+names(ccle.pathways) <- names(gene.list)
+
+# remove the columns containing Ensembl IDs and gene names, so that I can do calculations
+ccle.pathways <- lapply(ccle.pathways, FUN = select, 3:1078)
+
+# calculate the sums of expression of pathway component in each cell lines
+sum.gene.expression <- lapply(ccle.pathways, function(x) data.frame(Sums = colSums(x)))
+
+
+# this pretty much done with the dataframe, so I can move on to selecting the cell lines
+# as well as data visualization
+
+# this is new to me! So I can save the list, and have a break point to clean up the rams!
+save(sum.gene.expression, file = "sum_of_expression.RData")
+```
+
+```{r loading saved R data}
+
+load("sum_of_expression.RData")
+```
+
+
+```{r calculate cut off and pick cell lines}
+# I want to pick the cut off base on the boxplot, 
+# the whisker of the boxplot is 75 % quantile + 1.5 * IQR
+
+# write a function to calculate the cut off for each pathway for picking the cells
+cal.cut.off <- function(x) {
+  #cut.off <- quantile(x[1][,1], 0.75) + 1.5 * IQR(x[1][,1])
+  cut.off <- quantile(x[1][,1], 0.95)
+}
+
+# make the list containing the cut off values 
+cut.off.list <- lapply(sum.gene.expression, FUN = cal.cut.off)
+# turn the list into a df
+cut.off.list <- data.frame(Cut.off = unlist(cut.off.list))
+
+########
+# picking the cells here
+########
+
+# make a list of df to hold the cells
+cells.list <- list()
+
+# the for loop to get the cells. Have to use two lists for this
+# 1. the list containing the sum of gene expressions
+# 2. the list containing the cut off 
+for (i in 1:21) {
+  cells.list[[i]] <- sum.gene.expression[[i]][sum.gene.expression[[i]][,1] >= 
+                                                cut.off.list[i, 1], ,
+                                              drop = FALSE]
+  # add a column containing the pathway names, just to preserve it for later
+  cells.list[[i]][1:nrow(cells.list[[i]]), 2] <- "+"
+  colnames(cells.list[[i]])[2] <- names(sum.gene.expression[i])
+  
+ # cells.list[[i]][1:nrow(cells.list[[i]]), 2] <- names(sum.gene.expression[i])
+  # the cell line names are the row names now, I want to convert it into a column
+  cells.list[[i]][1:nrow(cells.list[[i]]), 3] <- row.names(cells.list[[i]])
+  cells.list[[i]] <- select(cells.list[[i]], Cells = 3, 2)
+}
+
+cells.list <- reduce(cells.list, function(df1, df2) full_join(df1, df2, by = "Cells"))
+
+
+BICR22_UPPER_AERODIGESTIVE_TRACT
+```
+
+
+
+```{r select cells and data visualisation}
+
+# take EGF signaling out, I want to use it as an example to show the way we select cells
+egf <- sum.gene.expression$Reactome.ESR
+
+# add a column just for the plotting
+egf$xaxis <- 1:nrow(egf) 
+egf$box.axis <- "EGF"
+
+# calculate the cut off, which should be 75 % quantile + 1.5 x IQR
+cut.off <- quantile(egf$Sums, 0.75) + 1.5 * IQR(egf$Sums)
+# then separate the data to 2 groups based on the cut off
+egf$Picked <- egf$Sums >= cut.off
+
+# I want to see if I can do a scatter plot with boxplot next to it, which require the ggpubr
+scatter.plot <- ggscatter(egf, 
+                          x = "xaxis", y = "Sums", 
+                          color = "Picked", palette = c("Grey", "Red"))
+
+# the boxplot 
+box <- ggboxplot(egf, x = "box.axis", y = "Sums", 
+                 alpha = 0.5, 
+                 fill = "grey") + clean_theme()
+
+x <- ggarrange(scatter.plot, box,
+          ncol = 2, align = "h",
+          widths = c(9, 1), heights = c(1,1),
+          common.legend = TRUE)
+
+```
+
