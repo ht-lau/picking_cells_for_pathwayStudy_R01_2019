@@ -35,6 +35,7 @@ library(readxl)
 library(qdapTools)  # required to turn the gene.list into df, list2df()
 library(VennDiagram)
 library(colorRamps)
+library(RColorBrewer)
 ```
 
 ```{r reactome gene list + TCGA oncogenes, echo=FALSE}
@@ -123,7 +124,14 @@ gene.list.long <- gene.list.long %>% separate(Pathways, into = c("Sources", "Pat
 ggplot(gene.list.long) +
   geom_bar(mapping = aes(x = Pathways)) +
   facet_wrap(~ Sources) +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.background = element_rect(fill = "white", colour = "grey50"))
+
+Reactome.vs.TCGA <- ggplot(gene.list.long) +
+  geom_bar(mapping = aes(x = Pathways)) +
+  facet_wrap(~ Sources) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.background = element_rect(fill = "white", colour = "grey50"))
 
 # see how many of the TCGA genes are actually covered in the Reactome
 
@@ -211,6 +219,13 @@ add.quantile <- function(test) {
 }
 
 sum.gene.expression <- lapply(sum.gene.expression, add.quantile)
+
+# change the name of the quantile columns
+test <- 
+for (i in 1:11) {
+  colnames(sum.gene.expression[[i]])[2] <- str_c("Quantile.", pathway.names[[i]])
+}
+
 ```
 
 ```{r calculate cut off and pick cell lines, echo=FALSE}
@@ -231,6 +246,9 @@ cut.off.list <- data.frame(Cut.off = unlist(cut.off.list))
 # picking the cells here
 ########
 
+# at this point, the dfs contain 2 columns, 
+# the sum of component expression and the quantile that the cell lines are sitting in each pathway
+
 # make a list of df to hold the cells
 cells.list <- list()
 
@@ -242,17 +260,21 @@ for (i in 1:21) {
                                                 cut.off.list[i, 1], ,
                                               drop = FALSE]
   # add a column containing the pathway names, just to preserve it for later
-  cells.list[[i]][1:nrow(cells.list[[i]]), 2] <- "+"
-  colnames(cells.list[[i]])[2] <- names(sum.gene.expression[i])
+  cells.list[[i]][1:nrow(cells.list[[i]]), 3] <- "+"
+  colnames(cells.list[[i]])[3] <- names(sum.gene.expression[i])
   
   # the cell line names are the row names now, I want to convert it into a column
-  cells.list[[i]][1:nrow(cells.list[[i]]), 3] <- row.names(cells.list[[i]])
-  cells.list[[i]] <- select(cells.list[[i]], Cells = 3, 2)
+  cells.list[[i]][1:nrow(cells.list[[i]]), 4] <- row.names(cells.list[[i]])
+  cells.list[[i]] <- select(cells.list[[i]], Cells = 4, 2, 3)
 }
 
 # reduce repeat the function in a sequential manner, until it finished the list, I think
 # the input is a list, then I added the function with 2 inputs and run full_join()
 cells.list <- reduce(cells.list, function(df1, df2) full_join(df1, df2, by = "Cells"))
+
+# split the cells.list data into 2 dfs. One contains the selected cells, the other contains the quantile data
+cells.list.quantile <- cells.list %>% select(Cells, contains("Quantile"))
+cells.list <- cells.list %>% select(-contains("Quantile"))
 
 # use str_split, because I can choose how many items the original string will be splitting into
 temp <- str_split(string = cells.list$Cells, pattern = "_", n = 2)
@@ -270,27 +292,49 @@ And there are 500 cell lines from 23 tissue types
 
 ggplot(cells.list) +
   geom_bar(mapping = aes(x = Tissues)) +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.background = element_rect(fill = "white", colour = "grey50")) +
   guides(fill=FALSE)
 
+tissue.types <- ggplot(cells.list) +
+  geom_bar(mapping = aes(x = Tissues)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.background = element_rect(fill = "white", colour = "grey50")) +
+  guides(fill=FALSE)
 ```
 
 ```{r %pathway in each tissue type, echo=FALSE}
 
+# I want to see which the percentage of each pathway in each tissue type
+
+# change the list into a long form
 cells.list.long <- cells.list %>%
   gather(key = "Pathways", value = "meh", 3:23) %>%
   filter(!is.na(meh))
 
+# then get a count table for the cell lines, basically how many cell line is in each pathway in each tissue type
 x <- data.frame(table(cells.list.long[, 2:3]))
+
+# then group the data by tissue type and calculate the percentage of pathway
 y <- group_by(x, Tissues) %>% mutate(Percent = Freq/sum(Freq) * 100)
+
+# Clean up the table
 z <- y %>% mutate(Percent = ifelse(Percent == 0, NA, Percent)) %>%
   select(-Freq) %>%
   spread(key = Pathways, value = Percent) 
 
+# plot it out
 ggplot(y) +
   geom_bar(mapping = aes(x = Tissues, y = Percent, fill = Pathways), stat = "identity") +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
-  scale_fill_manual(values = primary.colors(n = 23))
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = colorRampPalette(brewer.pal(9, "Set1"))(23))
+
+percent_of_pathway <- ggplot(y) +
+  geom_bar(mapping = aes(x = Tissues, y = Percent, fill = Pathways), stat = "identity") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = colorRampPalette(brewer.pal(9, "Set1"))(23)) 
 ```
 
 
@@ -319,7 +363,7 @@ box <- ggboxplot(egf, x = "box.axis", y = "Sums",
                  alpha = 0.5, 
                  fill = "grey") + clean_theme()
 
-ggarrange(scatter.plot, box,
+combine.plot <- ggarrange(scatter.plot, box,
           ncol = 2, align = "h",
           widths = c(9, 1), heights = c(1,1),
           common.legend = TRUE)
