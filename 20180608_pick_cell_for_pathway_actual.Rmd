@@ -1,6 +1,8 @@
 ---
 title: "Selection of CCLE based on the sum expression of signaling components"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 In the previous script, I determined that the sums normalized expression gene expression from each signaling pathway is probably the easiest way to choose what cell lines to use. The outliner cell lines can be identified using the box plot. Basically, the cell lines with a sum expression value higher than 75% quantile + 1.5 * IQR. 
@@ -31,6 +33,8 @@ library(ggthemes)
 library(ggpubr)
 library(readxl)
 library(qdapTools)  # required to turn the gene.list into df, list2df()
+library(VennDiagram)
+library(colorRamps)
 ```
 
 ```{r reactome gene list + TCGA oncogenes, echo=FALSE}
@@ -109,7 +113,7 @@ names(tcga.gene.list) <- str_c("TCGA.", SanchezVega.pathways)
 gene.list <- c(gene.list, tcga.gene.list)
 ```
 
-There are 1326 genes in total (with duplcations) or 940 (without duplication).
+There are 1326 genes in total (with duplcations) or 940 (without duplication). Among these, the TCGA data contains 310 (309) genes and Reactome contains 1016 (736 unique) genes. With 105 common genes.
 ```{r plotting the pathways, echo=FALSE}
 
 gene.list.long <- list2df(gene.list)
@@ -121,6 +125,18 @@ ggplot(gene.list.long) +
   facet_wrap(~ Sources) +
   theme(axis.text.x = element_text(angle = 60, hjust = 1))
 
+# see how many of the TCGA genes are actually covered in the Reactome
+
+tcga.genes <- gene.list.long$Gene.names[gene.list.long$Sources == "TCGA"]
+sum(!duplicated(tcga.genes))
+
+reactome.genes <- gene.list.long$Gene.names[gene.list.long$Sources == "Reactome"]
+sum(!duplicated(reactome.genes))
+
+x <- calculate.overlap(list(tcga.genes, reactome.genes))
+
+sum(reactome.genes %in% tcga.genes)
+sum(tcga.genes %in% reactome.genes)
 ```
 
 
@@ -161,10 +177,41 @@ save(sum.gene.expression, file = "sum_of_expression.RData")
 ```
 
 ```{r loading saved R data, echo=FALSE}
-
 load("sum_of_expression.RData")
 ```
 
+```{r calculate the quantile of each cell line with the pathway}
+
+# I originally gave Shao-En a table containing a "+" for cell lines that have a high enough 
+# expression of the pathway components. However, there is no information about the other
+# pathways. To solve this, I want to produce another table containing the quantile to show
+# where the particular cell line is sit in.
+
+# the following function basically produced a list containing the quantiles of each pathway
+# Then I just put the quantile in using if ... else statments. 
+# This is not beautiful and very stupid!!!
+add.quantile <- function(test) {
+  quantile.in.pathway <- quantile(test[,1])
+  test[,2] <- NA
+  for (i in 1:nrow(test)) {
+    if (test[i, 1] <= quantile.in.pathway[[1]]) {
+      test[i, 2] <- 0
+    } else if (test[i, 1] <= quantile.in.pathway[[2]]) {
+      test[i, 2] <- 25
+    } else if (test[i, 1] <= quantile.in.pathway[[3]]) {
+      test[i, 2] <- 50
+    } else if (test[i, 1] <= quantile.in.pathway[[4]]) {
+      test[i, 2] <- 75
+    } else {
+      test[i, 2] <- 100
+    }
+    colnames(test)[2] <- "Quantile"
+  }
+  return(test)
+}
+
+sum.gene.expression <- lapply(sum.gene.expression, add.quantile)
+```
 
 ```{r calculate cut off and pick cell lines, echo=FALSE}
 # I want to pick the cut off base on the boxplot, 
@@ -198,7 +245,6 @@ for (i in 1:21) {
   cells.list[[i]][1:nrow(cells.list[[i]]), 2] <- "+"
   colnames(cells.list[[i]])[2] <- names(sum.gene.expression[i])
   
- # cells.list[[i]][1:nrow(cells.list[[i]]), 2] <- names(sum.gene.expression[i])
   # the cell line names are the row names now, I want to convert it into a column
   cells.list[[i]][1:nrow(cells.list[[i]]), 3] <- row.names(cells.list[[i]])
   cells.list[[i]] <- select(cells.list[[i]], Cells = 3, 2)
@@ -213,19 +259,42 @@ temp <- str_split(string = cells.list$Cells, pattern = "_", n = 2)
 temp <- data.frame(matrix(unlist(temp), ncol = 2, byrow = TRUE))
 colnames(temp)[1:2] <- c("Cell.lines", "Tissues")
 cells.list <- cbind(temp, cells.list[, 2:22])
+
+#write.table(cells.list, "Picked_cells.txt", sep = "\t",
+#            row.names = FALSE, quote = FALSE, append = FALSE)
+
 ```
 
 And there are 500 cell lines from 23 tissue types
 ```{r plotting cells data, echo=FALSE}
 
 ggplot(cells.list) +
-  geom_bar(mapping = aes(x = Tissues, fill = Tissues)) +
+  geom_bar(mapping = aes(x = Tissues)) +
   theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
   guides(fill=FALSE)
 
 ```
 
+```{r %pathway in each tissue type, echo=FALSE}
 
+cells.list.long <- cells.list %>%
+  gather(key = "Pathways", value = "meh", 3:23) %>%
+  filter(!is.na(meh))
+
+x <- data.frame(table(cells.list.long[, 2:3]))
+y <- group_by(x, Tissues) %>% mutate(Percent = Freq/sum(Freq) * 100)
+z <- y %>% mutate(Percent = ifelse(Percent == 0, NA, Percent)) %>%
+  select(-Freq) %>%
+  spread(key = Pathways, value = Percent) 
+
+ggplot(y) +
+  geom_bar(mapping = aes(x = Tissues, y = Percent, fill = Pathways), stat = "identity") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  scale_fill_manual(values = primary.colors(n = 23))
+```
+
+
+Following is the example for how cell lines are picked based on their expression level of the pathway components.
 ```{r select cells and data visualisation, echo=FALSE}
 
 # take EGF signaling out, I want to use it as an example to show the way we select cells
@@ -256,4 +325,5 @@ ggarrange(scatter.plot, box,
           common.legend = TRUE)
 
 ```
+
 
