@@ -202,16 +202,14 @@ add.quantile <- function(test) {
   quantile.in.pathway <- quantile(test[,1])
   test[,2] <- NA
   for (i in 1:nrow(test)) {
-    if (test[i, 1] <= quantile.in.pathway[[1]]) {
-      test[i, 2] <- 0
-    } else if (test[i, 1] <= quantile.in.pathway[[2]]) {
-      test[i, 2] <- 25
-    } else if (test[i, 1] <= quantile.in.pathway[[3]]) {
-      test[i, 2] <- 50
-    } else if (test[i, 1] <= quantile.in.pathway[[4]]) {
-      test[i, 2] <- 75
+    if (test[i, 1] < quantile.in.pathway[[2]]) {
+      test[i, 2] <- "< 25"
+    } else if (test[i, 1] < quantile.in.pathway[[3]]) {
+      test[i, 2] <- "< 50"
+    } else if (test[i, 1] < quantile.in.pathway[[4]]) {
+      test[i, 2] <- "< 75"
     } else {
-      test[i, 2] <- 100
+      test[i, 2] <- "> 75"
     }
     colnames(test)[2] <- "Quantile"
   }
@@ -221,10 +219,24 @@ add.quantile <- function(test) {
 sum.gene.expression <- lapply(sum.gene.expression, add.quantile)
 
 # change the name of the quantile columns
-test <- 
-for (i in 1:11) {
-  colnames(sum.gene.expression[[i]])[2] <- str_c("Quantile.", pathway.names[[i]])
+for (i in 1:21) {
+  colnames(sum.gene.expression[[i]])[2] <- str_c("Quantile_", names(sum.gene.expression[i]))
+  # extract the cell names from row.names
+  sum.gene.expression[[i]]$Cells <- row.names(sum.gene.expression[[i]])
 }
+
+# combine all of the dfs into 1 using reduce()
+cell.pathway.quantile <- reduce(sum.gene.expression, 
+                                function(df1, df2) left_join(df1, df2, by = "Cells"))
+# move the cell names to the 1st column and remove the columns containing the sum of expression
+cell.pathway.quantile <- select(cell.pathway.quantile, 3, contains("Quantile"))
+
+# change to long form to help matching to the selected cell lines later
+# also correct the pathway names in the pathway column, all of them contain "Quantile_" now. 
+cell.pathway.quantile <- cell.pathway.quantile %>%
+  gather(key = "Pathways", value = "Quantiles", -Cells) %>%
+  separate(col = Pathways, into = c("crap", "Pathways"), sep = "e_") %>%
+  select(-crap)
 
 ```
 
@@ -265,16 +277,27 @@ for (i in 1:21) {
   
   # the cell line names are the row names now, I want to convert it into a column
   cells.list[[i]][1:nrow(cells.list[[i]]), 4] <- row.names(cells.list[[i]])
-  cells.list[[i]] <- select(cells.list[[i]], Cells = 4, 2, 3)
+  cells.list[[i]] <- select(cells.list[[i]], Cells = 4, 3)
 }
 
 # reduce repeat the function in a sequential manner, until it finished the list, I think
 # the input is a list, then I added the function with 2 inputs and run full_join()
 cells.list <- reduce(cells.list, function(df1, df2) full_join(df1, df2, by = "Cells"))
 
-# split the cells.list data into 2 dfs. One contains the selected cells, the other contains the quantile data
-cells.list.quantile <- cells.list %>% select(Cells, contains("Quantile"))
-cells.list <- cells.list %>% select(-contains("Quantile"))
+# convert to long form to match with quantile data
+cells.list <- cells.list %>%
+  gather(key = "Pathways", value = "Picked", -Cells)
+
+# match the picked cell with the quantile information, added a column
+cells.list <- left_join(cells.list, cell.pathway.quantile, by = c("Cells", "Pathways"))
+
+# fill the NAs in the picked cells column with the quantile number, then remove the information, turn back to wide format
+cells.list <- cells.list %>%
+  mutate(Picked = ifelse(is.na(cells.list$Picked), 
+                         cells.list$Quantiles, 
+                         cells.list$Picked)) %>%
+  select(-Quantiles) %>%
+  spread(key = Pathways, value = Picked)
 
 # use str_split, because I can choose how many items the original string will be splitting into
 temp <- str_split(string = cells.list$Cells, pattern = "_", n = 2)
@@ -282,8 +305,8 @@ temp <- data.frame(matrix(unlist(temp), ncol = 2, byrow = TRUE))
 colnames(temp)[1:2] <- c("Cell.lines", "Tissues")
 cells.list <- cbind(temp, cells.list[, 2:22])
 
-#write.table(cells.list, "Picked_cells.txt", sep = "\t",
-#            row.names = FALSE, quote = FALSE, append = FALSE)
+write.table(cells.list, "Picked_cells.txt", sep = "\t",
+            row.names = FALSE, quote = FALSE, append = FALSE)
 
 ```
 
