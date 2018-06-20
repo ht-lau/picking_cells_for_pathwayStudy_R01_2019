@@ -221,21 +221,28 @@ sum.gene.expression <- lapply(sum.gene.expression, add.quantile)
 # change the name of the quantile columns
 for (i in 1:21) {
   colnames(sum.gene.expression[[i]])[2] <- str_c("Quantile_", names(sum.gene.expression[i]))
+  colnames(sum.gene.expression[[i]])[1] <- str_c("Sum_", names(sum.gene.expression[i]))
   # extract the cell names from row.names
   sum.gene.expression[[i]]$Cells <- row.names(sum.gene.expression[[i]])
 }
 
 # combine all of the dfs into 1 using reduce()
-cell.pathway.quantile <- reduce(sum.gene.expression, 
+cell.pathway.sum.quantile <- reduce(sum.gene.expression, 
                                 function(df1, df2) left_join(df1, df2, by = "Cells"))
 # move the cell names to the 1st column and remove the columns containing the sum of expression
-cell.pathway.quantile <- select(cell.pathway.quantile, 3, contains("Quantile"))
+cell.pathway.quantile <- select(cell.pathway.sum.quantile, 3, contains("Quantile"))
 
 # change to long form to help matching to the selected cell lines later
 # also correct the pathway names in the pathway column, all of them contain "Quantile_" now. 
 cell.pathway.quantile <- cell.pathway.quantile %>%
   gather(key = "Pathways", value = "Quantiles", -Cells) %>%
   separate(col = Pathways, into = c("crap", "Pathways"), sep = "e_") %>%
+  select(-crap)
+
+# also make another df containing the sum of component expression instead of just the quantile
+cell.pathway.sum <- select(cell.pathway.sum.quantile, 3, contains("Sum")) %>%
+  gather(key = "Pathways", value = "Sum.of.expression", -Cells) %>%
+  separate(col = Pathways, into = c("crap", "Pathways"), sep = "m_") %>%
   select(-crap)
 
 ```
@@ -289,23 +296,44 @@ cells.list <- cells.list %>%
   gather(key = "Pathways", value = "Picked", -Cells)
 
 # match the picked cell with the quantile information, added a column
-cells.list <- left_join(cells.list, cell.pathway.quantile, by = c("Cells", "Pathways"))
+cells.list.quantile <- left_join(cells.list, cell.pathway.quantile, by = c("Cells", "Pathways"))
 
 # fill the NAs in the picked cells column with the quantile number, then remove the information, turn back to wide format
-cells.list <- cells.list %>%
-  mutate(Picked = ifelse(is.na(cells.list$Picked), 
-                         cells.list$Quantiles, 
-                         cells.list$Picked)) %>%
+cells.list.quantile <- cells.list.quantile %>%
+  mutate(Picked = ifelse(is.na(cells.list.quantile$Picked), 
+                         cells.list.quantile$Quantiles, 
+                         cells.list.quantile$Picked)) %>%
   select(-Quantiles) %>%
   spread(key = Pathways, value = Picked)
 
 # use str_split, because I can choose how many items the original string will be splitting into
-temp <- str_split(string = cells.list$Cells, pattern = "_", n = 2)
+temp <- str_split(string = cells.list.quantile$Cells, pattern = "_", n = 2)
 temp <- data.frame(matrix(unlist(temp), ncol = 2, byrow = TRUE))
 colnames(temp)[1:2] <- c("Cell.lines", "Tissues")
-cells.list <- cbind(temp, cells.list[, 2:22])
+cells.list.quantile <- cbind(temp, cells.list.quantile[, 2:22])
 
-write.table(cells.list, "Picked_cells.txt", sep = "\t",
+#write.table(cells.list, "Picked_cells.txt", sep = "\t",
+#            row.names = FALSE, quote = FALSE, append = FALSE)
+
+##############################
+# match picked cells with sum of expression data. SE wants to try clustering
+##############################
+
+# match the picked cell with the quantile information, added a column
+cells.list.sum <- left_join(cells.list, cell.pathway.sum, by = c("Cells", "Pathways"))
+
+# fill the NAs in the picked cells column with the quantile number, then remove the information, turn back to wide format
+cells.list.sum <- cells.list.sum %>%
+  select(-Picked) %>%
+  spread(key = Pathways, value = Sum.of.expression)
+
+# use str_split, because I can choose how many items the original string will be splitting into
+temp <- str_split(string = cells.list.sum$Cells, pattern = "_", n = 2)
+temp <- data.frame(matrix(unlist(temp), ncol = 2, byrow = TRUE))
+colnames(temp)[1:2] <- c("Cell.lines", "Tissues")
+cells.list.sum <- cbind(temp, cells.list.sum[, 2:22])
+
+write.table(cells.list.sum, "Picked_cells_sum_expression.txt", sep = "\t",
             row.names = FALSE, quote = FALSE, append = FALSE)
 
 ```
