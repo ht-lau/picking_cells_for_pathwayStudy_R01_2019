@@ -178,45 +178,52 @@ for (i in 1:length(gene.list)) {
 # rename of the dfs in the list with each respective signaling pathway
 names(ccle.pathways) <- names(gene.list)
 
-# filter cells with low expression of the essential component
+# I made a table containing the essential genes in each pathway, e.g. EGFR in EGF signaling
 essential <- read.delim("signaling_genes/essential_each_pathway.txt", stringsAsFactors = FALSE)
 
-filter.essential.genes <- function(essential.df) {
+# write a funtion to filter out cells that do not meet a threshold expression of the essential genes
+# Will only work on the reactome pathways
+# Input argument will be the essential gene data frame
+# The expression data is already in the function 
+filter.essential.genes <- function(essential.df) { 
   pathway <- essential.df["Pathway"]
   essential.gene <- essential.df["Gene"]
+  # the expression data is a list of data frame
+  # So just extract the pathway data frame that match the pathway name
   filtered.pathway <- ccle.pathways[[pathway]]
   
+  # make a new data frame holding the essential gene expression
   essential.gene.expression <- filtered.pathway[grepl(x = filtered.pathway$Gene.names,
                                                       pattern = essential.gene), ]
   
-  essential.gene.expression$Median <- apply(essential.gene.expression[, 3:1078], 
-                                            1, median)
-  test.median <- as.data.frame(apply(essential.gene.expression[, 3:1078, drop = FALSE],
-                                     2, function(x) x > essential.gene.expression$Median))
+  # use 75 percentile as the cut-off and test
+  essential.gene.expression$Threshold <- apply(essential.gene.expression[, 3:1078], 
+                                            1, quantile, probs = 0.75)
+  test.threshold <- as.data.frame(apply(essential.gene.expression[, 3:1078, drop = FALSE],
+                                     2, function(x) x > essential.gene.expression$Threshold))
   
-  if (ncol(test.median) < 2) {
-    retaining.cells <- test.median[test.median[,1] == "TRUE", , drop = FALSE]
-    retaining.cells <- row.names(retaining.cells)
+  # the problem is that apply() turn the 1 row data frames into 1 column and n rows df...
+  # So I have to make a if... else to test and fix it
+  # Will extract the cell line names to filter out
+  if (ncol(test.threshold) < 2) {
+    unwant.cells <- test.threshold[test.threshold[,1] == "FALSE", , drop = FALSE]
+    unwant.cells <- row.names(unwant.cells)
   } else {
-    retaining.cells <- names(test.median)[apply(test.median, 
-                                                2, function(x) any(x == "TRUE"))]
+    unwant.cells <- names(test.threshold)[apply(test.threshold, 
+                                                2, function(x) all(x == "FALSE"))]
   }
+  
+  # impute the expression data with a very low number for the cells that will be removed 
+  filtered.pathway[, unwant.cells] <- 10
 
-  return(retaining.cells)
+  return(filtered.pathway)
 }
   
-test <- apply(essential, 1, filter.essential.genes)
+filtered.reactomes <- apply(essential, 1, filter.essential.genes)
+names(filtered.reactomes) <- essential$Pathway
 
-test.code <- lapply(test, ncol)
-test.code <- test[[3]]
-test.code <- test.code[, c(3:5, 1079)]
-test.code <- as.data.frame(apply(test.code[,1:3], 2, function(x) x > test.code$Median))
-test.code$Sim <- rep(FALSE, 5)
-test.code <- names(test.code)[apply(test.code, 2, function(x) any(x == "TRUE"))]
-
-test.code <- test[[1]]
-test.code <- test.code[test.code[,1] == "TRUE",, drop = FALSE]
-test.code <- row.names(test.code)
+# add the filtered pathways back to the ccle.pathways
+ccle.pathways[1:11] <- filtered.reactomes
 
 # remove the columns containing Ensembl IDs and gene names, so that I can do calculations
 ccle.pathways <- lapply(ccle.pathways, FUN = select, 3:1078)
@@ -301,7 +308,10 @@ cell.pathway.sum <- select(cell.pathway.sum.quantile, 3, contains("Sum")) %>%
 
 # write a function to calculate the cut off for each pathway for picking the cells
 cal.cut.off <- function(x) {
-  cut.off <- quantile(x[1][,1], 0.75) + 1.5 * IQR(x[1][,1])
+  # there are some imputed values and I know that it should be the min, so remove them
+  fake.number <- min(x[1][,1])
+  x[1][,1] <- ifelse(x[1][,1] == fake.number, NA, x[1][,1])
+  cut.off <- quantile(x[1][,1], 0.75, na.rm = TRUE) + 1.5 * IQR(x[1][,1], na.rm = TRUE)
 }
 
 # make the list containing the cut off values 
@@ -381,25 +391,22 @@ temp <- data.frame(matrix(unlist(temp), ncol = 2, byrow = TRUE))
 colnames(temp)[1:2] <- c("Cell.lines", "Tissues")
 cells.list.sum <- cbind(temp, cells.list.sum[, 2:22])
 
-write.table(cells.list.sum, "Picked_cells_sum_expression.txt", sep = "\t",
-            row.names = FALSE, quote = FALSE, append = FALSE)
+#write.table(cells.list.sum, "Picked_cells_sum_expression.txt", sep = "\t",
+#            row.names = FALSE, quote = FALSE, append = FALSE)
 
 ```
 
 And there are 500 cell lines from 23 tissue types
 ```{r plotting cells data, echo=FALSE}
 
-ggplot(cells.list) +
+tissue.types <- ggplot(cells.list.sum) +
   geom_bar(mapping = aes(x = Tissues)) +
   theme(axis.text.x = element_text(angle = 60, hjust = 1),
         panel.background = element_rect(fill = "white", colour = "grey50")) +
   guides(fill=FALSE)
 
-tissue.types <- ggplot(cells.list) +
-  geom_bar(mapping = aes(x = Tissues)) +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1),
-        panel.background = element_rect(fill = "white", colour = "grey50")) +
-  guides(fill=FALSE)
+tissue.types
+
 ```
 
 ```{r %pathway in each tissue type, echo=FALSE}
@@ -408,8 +415,9 @@ tissue.types <- ggplot(cells.list) +
 
 # change the list into a long form
 cells.list.long <- cells.list %>%
-  gather(key = "Pathways", value = "meh", 3:23) %>%
-  filter(!is.na(meh))
+  separate(Cells, into = c("Cell.lines", "Tissues"), sep = "_", n = 2) %>%
+  filter(!is.na(Picked))
+
 
 # then get a count table for the cell lines, basically how many cell line is in each pathway in each tissue type
 x <- data.frame(table(cells.list.long[, 2:3]))
@@ -423,17 +431,14 @@ z <- y %>% mutate(Percent = ifelse(Percent == 0, NA, Percent)) %>%
   spread(key = Pathways, value = Percent) 
 
 # plot it out
-ggplot(y) +
-  geom_bar(mapping = aes(x = Tissues, y = Percent, fill = Pathways), stat = "identity") +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1),
-        panel.background = element_rect(fill = "white")) +
-  scale_fill_manual(values = colorRampPalette(brewer.pal(9, "Set1"))(23))
-
 percent_of_pathway <- ggplot(y) +
   geom_bar(mapping = aes(x = Tissues, y = Percent, fill = Pathways), stat = "identity") +
   theme(axis.text.x = element_text(angle = 60, hjust = 1),
         panel.background = element_rect(fill = "white")) +
   scale_fill_manual(values = colorRampPalette(brewer.pal(9, "Set1"))(23)) 
+
+percent_of_pathway
+
 ```
 
 
@@ -448,17 +453,20 @@ egf$xaxis <- 1:nrow(egf)
 egf$box.axis <- "EGF"
 
 # calculate the cut off, which should be 75 % quantile + 1.5 x IQR
-cut.off <- quantile(egf$Sums, 0.75) + 1.5 * IQR(egf$Sums)
+fake.value <- min(egf$Sum_Reactome.EGFR)
+Sums <- egf$Sum_Reactome.EGFR
+Sums <- ifelse(Sums == fake.value, NA, Sums)
+cut.off <- quantile(Sums, 0.75, na.rm = TRUE) + 1.5 * IQR(Sums, na.rm = TRUE)
 # then separate the data to 2 groups based on the cut off
-egf$Picked <- egf$Sums >= cut.off
+egf$Picked <- egf$Sum_Reactome.EGFR >= cut.off
 
 # I want to see if I can do a scatter plot with boxplot next to it, which require the ggpubr
 scatter.plot <- ggscatter(egf, 
-                          x = "xaxis", y = "Sums", 
+                          x = "xaxis", y = "Sum_Reactome.EGFR", 
                           color = "Picked", palette = c("Grey", "Red"))
 
 # the boxplot 
-box <- ggboxplot(egf, x = "box.axis", y = "Sums", 
+box <- ggboxplot(egf, x = "box.axis", y = "Sum_Reactome.EGFR", 
                  alpha = 0.5, 
                  fill = "grey") + clean_theme()
 
@@ -466,6 +474,8 @@ combine.plot <- ggarrange(scatter.plot, box,
           ncol = 2, align = "h",
           widths = c(9, 1), heights = c(1,1),
           common.legend = TRUE)
+
+combine.plot
 
 ```
 
