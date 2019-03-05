@@ -35,6 +35,7 @@ library(qdapTools)  # required to turn the gene.list into df, list2df()
 library(VennDiagram)
 library(colorRamps)
 library(RColorBrewer)
+library(gplots)
 ```
 
 ```{r reactome gene list + TCGA oncogenes, echo=FALSE}
@@ -479,4 +480,34 @@ combine.plot
 
 ```
 
+To make a heatmap to visualize the picks
+
+```{r}
+
+# just so that I don't have to go back up to find the name
+cell.pathway.sum <- cell.pathway.sum # this hold the cells with the sum of expression
+
+# spread the cells 
+for.heatmap <- cell.pathway.sum %>%
+  mutate(Sum.of.expression = log10(Sum.of.expression)) %>%
+  filter(str_detect(Pathways, "Reactome")) %>% 
+  separate(Pathways, into = c("meh", "Pathways")) %>%
+  select(-meh) %>%
+  spread(key = Pathways, value = Sum.of.expression)
+
+# write a function to remove the lowest number, scale and then impute with 0
+
+scale.impute <- function(x) {
+  x <- ifelse(x == min(x), NA, x)
+  scale.x <- scale(x)
+  scale.x <- ifelse(is.na(scale.x), 0, scale.x)
+}
+
+for.heatmap[, -1] <- apply(as.matrix(for.heatmap[, -1]), 2, scale.impute)
+
+heatmap.2(t(for.heatmap[, -1]), 
+          trace = "none",
+          col = rev(redblue(30)))
+
+```
 
