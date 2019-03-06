@@ -156,7 +156,6 @@ sum(reactome.genes %in% tcga.genes)
 sum(tcga.genes %in% reactome.genes)
 ```
 
-
 ```{r match the signaling component and calculate the sum of expressions, echo=FALSE}
 ########
 # this part save the output, so I don't have to re-load the big data frame again
@@ -178,6 +177,12 @@ for (i in 1:length(gene.list)) {
 
 # rename of the dfs in the list with each respective signaling pathway
 names(ccle.pathways) <- names(gene.list)
+
+```
+
+Write a function to select cells as the models for pathways. The cells have to express the essential pathway component(s). For example, EGFR will have to express for cell lines used as EGFR signaling model; any of the FGFRs have to express for the FGFR signaling model cells. I initially think that the essentail component(s) have to be highly expressed. However, when I think about it more, I should actually choose the cell lines with a moderate expression. The reason is that I don't want the kinases to drive the signal transduction by auto-phosphorylation. 
+
+```{r cell selecting function}
 
 # I made a table containing the essential genes in each pathway, e.g. EGFR in EGF signaling
 essential <- read.delim("signaling_genes/essential_each_pathway.txt", stringsAsFactors = FALSE)
@@ -233,24 +238,39 @@ filter.essential.genes <- function(essential.df,        # essential genes df
 
   return(filtered.pathway)
 }
-  
+
+```
+
+I will have to make 2 lists: one contains the selected cells; the other one contains most of the cells. The second list is for mapping where the selected cells sit in the expression spectra. 
+
+```{r selecting cells}
+
+# filtered cells will be for picking the cells to use
 filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.45, 0.55))
 names(filtered.reactomes) <- essential$Pathway
 
-filtered.cells <- ccle.pathways
-filtered.cells[1:11] <- filtered.reactomes
+filtered.cells <- filtered.reactomes
 
+filtered.cells <- lapply(filtered.cells, FUN = select, 3:1078)
+filtered.cells.sumExp <- lapply(filtered.cells, function(x) data.frame(Sums = colSums(x)))
+
+```
+
+```{r}
+
+# the followings are for visualization
 # add the filtered pathways back to the ccle.pathways
 filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.2, 1))
 names(filtered.reactomes) <- essential$Pathway
 
-ccle.pathways[1:11] <- filtered.reactomes
+filtered.ccle.pathways <- ccle.pathways
+filtered.ccle.pathways[1:11] <- filtered.reactomes
 
 # remove the columns containing Ensembl IDs and gene names, so that I can do calculations
-ccle.pathways <- lapply(ccle.pathways, FUN = select, 3:1078)
+filtered.ccle.pathways <- lapply(filtered.ccle.pathways, FUN = select, 3:1078)
 
 # calculate the sums of expression of pathway component in each cell lines
-sum.gene.expression <- lapply(ccle.pathways, function(x) data.frame(Sums = colSums(x)))
+sum.gene.expression <- lapply(filtered.ccle.pathways, function(x) data.frame(Sums = colSums(x)))
 
 
 # this pretty much done with the dataframe, so I can move on to selecting the cell lines
