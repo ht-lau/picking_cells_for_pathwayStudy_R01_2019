@@ -1,0 +1,1 @@
+I changed the algorithm for selecting cells with median expression of the genes. However, the filtering will result in the loss of information in most cells. So I want to change the function and to be able to keep the information somewhere. 
