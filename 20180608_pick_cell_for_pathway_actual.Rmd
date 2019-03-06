@@ -229,14 +229,17 @@ filter.essential.genes <- function(essential.df,        # essential genes df
     unwant.cells <- test.threshold[test.threshold[,1] == "TRUE", , drop = FALSE]
     unwant.cells <- row.names(unwant.cells)
   } else {
+#    unwant.cells <- names(test.threshold)[apply(test.threshold, 
+#                                                2, function(x) all(x == "TRUE"))]
     unwant.cells <- names(test.threshold)[apply(test.threshold, 
-                                                2, function(x) all(x == "TRUE"))]
+                                                2, function(x) sum(x == "TRUE")/length(x) >= 0.6)]
   }
   
   # impute the expression data with a very low number for the cells that will be removed 
   filtered.pathway[, unwant.cells] <- 0
 
   return(filtered.pathway)
+
 }
 
 ```
@@ -246,13 +249,33 @@ I will have to make 2 lists: one contains the selected cells; the other one cont
 ```{r selecting cells}
 
 # filtered cells will be for picking the cells to use
-filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.45, 0.55))
-names(filtered.reactomes) <- essential$Pathway
+filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.4, 0.6))
+names(filtered.reactomes) <- sub(pattern = "Reactome.", replacement = "", x = essential$Pathway)
 
 filtered.cells <- filtered.reactomes
 
 filtered.cells <- lapply(filtered.cells, FUN = select, 3:1078)
 filtered.cells.sumExp <- lapply(filtered.cells, function(x) data.frame(Sums = colSums(x)))
+
+filtered.cells.sumExp <- Reduce(x = filtered.cells.sumExp, f = function(x,y) cbind(x,y))
+names(filtered.cells.sumExp) <- names(filtered.reactomes)
+
+filtered.cells <- filtered.cells.sumExp %>% 
+  gather(key = "Pathways", value = "Sum.exp") %>%
+  filter(Sum.exp != 0)
+
+reactome.box <- ggplot(filtered.cells) +
+  geom_boxplot(mapping = aes(x = Pathways, y = log10(Sum.exp))) +
+  theme(axis.text.x = element_text(angle=45),
+        axis.title.x = element_blank()) 
+
+reactome.box
+
+data.frame(table(filtered.cells$Pathways))
+
+
+filtered.cells.sumExp$Non0 <- apply(filtered.cells.sumExp, 1, 
+                                    function(x) sum(x != 0))
 
 ```
 
