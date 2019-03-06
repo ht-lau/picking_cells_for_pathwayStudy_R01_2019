@@ -198,24 +198,41 @@ filter.essential.genes <- function(essential.df) {
                                                       pattern = essential.gene), ]
   
   # use 75 percentile as the cut-off and test
-  essential.gene.expression$Threshold <- apply(essential.gene.expression[, 3:1078], 
-                                            1, quantile, probs = 0.75)
-  test.threshold <- as.data.frame(apply(essential.gene.expression[, 3:1078, drop = FALSE],
-                                     2, function(x) x > essential.gene.expression$Threshold))
+#  essential.gene.expression$Threshold <- apply(essential.gene.expression[, 3:1078], 
+#                                            1, quantile, probs = 0.75)
+#  test.threshold <- as.data.frame(apply(essential.gene.expression[, 3:1078, drop = FALSE],
+#                                     2, function(x) x > essential.gene.expression$Threshold))
   
-  # the problem is that apply() turn the 1 row data frames into 1 column and n rows df...
+  # I think the cells should be expressing the essential genes, but not over-expressing. 
+  # Like EGFR will auto-phosphorylate then it will be very hard to turn off the signal.
+  # I will test, and remove the cells that are not within the expression range.
+  
+  # t(apply()) here because i want to fill two columns. 
+  # If I don't t(), apply() will fill up percent.5 before percent.6,
+  # meaning that percent.5 will have 50 %-tile and 60 %-tile of gene 1 in row 1 and row 2
+  # then gene 2 in row 3 and row 4, etc
+  essential.gene.expression[, c("low.bound", "hi.bound")] <- t(apply(essential.gene.expression[, 3:1078],
+                                                                    1, quantile, probs = c(0.5, 0.6)))
+  # Test expression that are out of range
+  test.threshold <- as.data.frame(apply(essential.gene.expression[, 3:1078, drop = FALSE], 2,
+                                        function(x) x < essential.gene.expression$low.bound |
+                                          x > essential.gene.expression$hi.bound))
+  
+  # The test was to see what genes are out of the target range,
+  # so TRUE will be things that I don't want, i.e. extract cell lines to remove
+  
+  # The problem is that apply() turn the 1 row data frames into 1 column and n rows df...
   # So I have to make a if... else to test and fix it
-  # Will extract the cell line names to filter out
   if (ncol(test.threshold) < 2) {
-    unwant.cells <- test.threshold[test.threshold[,1] == "FALSE", , drop = FALSE]
+    unwant.cells <- test.threshold[test.threshold[,1] == "TRUE", , drop = FALSE]
     unwant.cells <- row.names(unwant.cells)
   } else {
     unwant.cells <- names(test.threshold)[apply(test.threshold, 
-                                                2, function(x) all(x == "FALSE"))]
+                                                2, function(x) all(x == "TRUE"))]
   }
   
   # impute the expression data with a very low number for the cells that will be removed 
-  filtered.pathway[, unwant.cells] <- 10
+  filtered.pathway[, unwant.cells] <- 0
 
   return(filtered.pathway)
 }
