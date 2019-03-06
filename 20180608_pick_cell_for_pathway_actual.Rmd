@@ -185,8 +185,11 @@ essential <- read.delim("signaling_genes/essential_each_pathway.txt", stringsAsF
 # write a funtion to filter out cells that do not meet a threshold expression of the essential genes
 # Will only work on the reactome pathways
 # Input argument will be the essential gene data frame
-# The expression data is already in the function 
-filter.essential.genes <- function(essential.df) { 
+# The expression data (ccle.pathways) is already in the function 
+filter.essential.genes <- function(essential.df,        # essential genes df
+                                   retain.percentile    # a length-of-two vector with 
+                                                        # the lower and upper expression to be kept
+                                   ) { 
   pathway <- essential.df["Pathway"]
   essential.gene <- essential.df["Gene"]
   # the expression data is a list of data frame
@@ -197,12 +200,6 @@ filter.essential.genes <- function(essential.df) {
   essential.gene.expression <- filtered.pathway[grepl(x = filtered.pathway$Gene.names,
                                                       pattern = essential.gene), ]
   
-  # use 75 percentile as the cut-off and test
-#  essential.gene.expression$Threshold <- apply(essential.gene.expression[, 3:1078], 
-#                                            1, quantile, probs = 0.75)
-#  test.threshold <- as.data.frame(apply(essential.gene.expression[, 3:1078, drop = FALSE],
-#                                     2, function(x) x > essential.gene.expression$Threshold))
-  
   # I think the cells should be expressing the essential genes, but not over-expressing. 
   # Like EGFR will auto-phosphorylate then it will be very hard to turn off the signal.
   # I will test, and remove the cells that are not within the expression range.
@@ -212,7 +209,7 @@ filter.essential.genes <- function(essential.df) {
   # meaning that percent.5 will have 50 %-tile and 60 %-tile of gene 1 in row 1 and row 2
   # then gene 2 in row 3 and row 4, etc
   essential.gene.expression[, c("low.bound", "hi.bound")] <- t(apply(essential.gene.expression[, 3:1078],
-                                                                    1, quantile, probs = c(0.5, 0.6)))
+                                                                    1, quantile, probs = retain.percentile))
   # Test expression that are out of range
   test.threshold <- as.data.frame(apply(essential.gene.expression[, 3:1078, drop = FALSE], 2,
                                         function(x) x < essential.gene.expression$low.bound |
@@ -237,10 +234,16 @@ filter.essential.genes <- function(essential.df) {
   return(filtered.pathway)
 }
   
-filtered.reactomes <- apply(essential, 1, filter.essential.genes)
+filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.45, 0.55))
 names(filtered.reactomes) <- essential$Pathway
 
+filtered.cells <- ccle.pathways
+filtered.cells[1:11] <- filtered.reactomes
+
 # add the filtered pathways back to the ccle.pathways
+filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.2, 1))
+names(filtered.reactomes) <- essential$Pathway
+
 ccle.pathways[1:11] <- filtered.reactomes
 
 # remove the columns containing Ensembl IDs and gene names, so that I can do calculations
