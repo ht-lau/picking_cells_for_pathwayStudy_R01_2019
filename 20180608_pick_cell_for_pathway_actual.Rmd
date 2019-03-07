@@ -353,7 +353,9 @@ p <- ggplot() +
   geom_point(data = selected.cells.for.plotting, 
                mapping = aes(x = factor(Pathways), y = log10(Expression),
                              colour = Cells)) +
-  xlab("Expression of pathway marker genes")
+  xlab("Expression of pathway marker genes") +
+  theme(axis.text.x = element_text(angle=45),
+        panel.background = element_rect(colour = "black", fill = "white"))
 
 p
 
