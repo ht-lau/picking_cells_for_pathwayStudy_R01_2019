@@ -31,6 +31,7 @@ library(tidyverse)
 library(ggthemes)
 library(ggpubr)
 library(readxl)
+library(writexl)
 library(qdapTools)  # required to turn the gene.list into df, list2df()
 library(VennDiagram)
 library(colorRamps)
@@ -249,7 +250,7 @@ I will have to make 2 lists: one contains the selected cells; the other one cont
 ```{r selecting cells}
 
 # filtered cells will be for picking the cells to use
-filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.4, 0.6))
+filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.6, 0.8))
 names(filtered.reactomes) <- sub(pattern = "Reactome.", replacement = "", x = essential$Pathway)
 
 filtered.cells <- filtered.reactomes
@@ -276,6 +277,39 @@ data.frame(table(filtered.cells$Pathways))
 
 filtered.cells.sumExp$Non0 <- apply(filtered.cells.sumExp, 1, 
                                     function(x) sum(x != 0))
+
+cells.with.six.pathways <- filtered.cells.sumExp %>% 
+  mutate(Cells = rownames(filtered.cells.sumExp)) %>%
+  filter(Non0 > 5) %>%
+  select(-Non0) %>%
+  gather(key = "Pathways", value = "Expression", -Cells) %>%
+  spread(key = Cells, value = Expression) %>%
+  rename(Gene.names = "Pathways") # I need to match the data to the sum data later, by the column names
+
+picked.cells <- rownames(filtered.cells.sumExp)[filtered.cells.sumExp$Non0 > 5]
+
+picked.cells.expression <- lapply(ccle.pathways[1:11], select, Gene.names, picked.cells)
+
+column.names <- names(cells.with.six.pathways)
+for (i in 1:11) {
+  picked.cells.expression[[i]][nrow(picked.cells.expression[[i]]) + 1, column.names] <- 
+    cells.with.six.pathways[i, ]
+}
+
+cleanup <- function(x) {
+  x <- data.frame(t(x))
+  names(x) <- unname(unlist(x[1, ]))
+  x <- x[-1,]
+  colnames(x)[ncol(x)] <- "Can.be.used"
+  x$Cells <- rownames(x)
+  x <- x[, c(ncol(x), ncol(x)-1, 1:(ncol(x)-2))]
+  x <- type.convert(x)
+  x$Can.be.used <- ifelse(x$Can.be.used == 0, "", "+")
+  return(x)
+}
+picked.cells.expression <- lapply(picked.cells.expression, cleanup)
+
+#write_xlsx(picked.cells.expression, "ModelCells.xlsx")
 
 ```
 
