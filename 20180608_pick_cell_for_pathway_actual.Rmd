@@ -193,8 +193,9 @@ essential <- read.delim("signaling_genes/essential_each_pathway.txt", stringsAsF
 # Input argument will be the essential gene data frame
 # The expression data (ccle.pathways) is already in the function 
 filter.essential.genes <- function(essential.df,        # essential genes df
-                                   retain.percentile    # a length-of-two vector with 
-                                                        # the lower and upper expression to be kept
+                                   retain.percentile = NULL    # a length-of-two vector with 
+                                                               # the lower and upper expression to be kept
+                                                               # NULL will output the expression of the essential genes
                                    ) { 
   pathway <- essential.df["Pathway"]
   essential.gene <- essential.df["Gene"]
@@ -206,40 +207,45 @@ filter.essential.genes <- function(essential.df,        # essential genes df
   essential.gene.expression <- filtered.pathway[grepl(x = filtered.pathway$Gene.names,
                                                       pattern = essential.gene), ]
   
-  # I think the cells should be expressing the essential genes, but not over-expressing. 
-  # Like EGFR will auto-phosphorylate then it will be very hard to turn off the signal.
-  # I will test, and remove the cells that are not within the expression range.
   
-  # t(apply()) here because i want to fill two columns. 
-  # If I don't t(), apply() will fill up percent.5 before percent.6,
-  # meaning that percent.5 will have 50 %-tile and 60 %-tile of gene 1 in row 1 and row 2
-  # then gene 2 in row 3 and row 4, etc
-  essential.gene.expression[, c("low.bound", "hi.bound")] <- t(apply(essential.gene.expression[, 3:1078],
-                                                                    1, quantile, probs = retain.percentile))
-  # Test expression that are out of range
-  test.threshold <- as.data.frame(apply(essential.gene.expression[, 3:1078, drop = FALSE], 2,
-                                        function(x) x < essential.gene.expression$low.bound |
-                                          x > essential.gene.expression$hi.bound))
-  
-  # The test was to see what genes are out of the target range,
-  # so TRUE will be things that I don't want, i.e. extract cell lines to remove
-  
-  # The problem is that apply() turn the 1 row data frames into 1 column and n rows df...
-  # So I have to make a if... else to test and fix it
-  if (ncol(test.threshold) < 2) {
-    unwant.cells <- test.threshold[test.threshold[,1] == "TRUE", , drop = FALSE]
-    unwant.cells <- row.names(unwant.cells)
+  if (length(retain.percentile) == 0) {
+    return(essential.gene.expression)
   } else {
-#    unwant.cells <- names(test.threshold)[apply(test.threshold, 
-#                                                2, function(x) all(x == "TRUE"))]
-    unwant.cells <- names(test.threshold)[apply(test.threshold, 
-                                                2, function(x) sum(x == "TRUE")/length(x) >= 0.6)]
-  }
+    # I think the cells should be expressing the essential genes, but not over-expressing. 
+    # Like EGFR will auto-phosphorylate then it will be very hard to turn off the signal.
+    # I will test, and remove the cells that are not within the expression range.
   
-  # impute the expression data with a very low number for the cells that will be removed 
-  filtered.pathway[, unwant.cells] <- 0
-
-  return(filtered.pathway)
+    # t(apply()) here because i want to fill two columns. 
+    # If I don't t(), apply() will fill up percent.5 before percent.6,
+    # meaning that percent.5 will have 50 %-tile and 60 %-tile of gene 1 in row 1 and row 2
+    # then gene 2 in row 3 and row 4, etc
+    essential.gene.expression[, c("low.bound", "hi.bound")] <- t(apply(essential.gene.expression[, 3:1078],
+                                                                      1, quantile, probs = retain.percentile))
+    # Test expression that are out of range
+    test.threshold <- as.data.frame(apply(essential.gene.expression[, 3:1078, drop = FALSE], 2,
+                                          function(x) x < essential.gene.expression$low.bound |
+                                            x > essential.gene.expression$hi.bound))
+  
+    # The test was to see what genes are out of the target range,
+    # so TRUE will be things that I don't want, i.e. extract cell lines to remove
+  
+    # The problem is that apply() turn the 1 row data frames into 1 column and n rows df...
+    # So I have to make a if... else to test and fix it
+    if (ncol(test.threshold) < 2) {
+      unwant.cells <- test.threshold[test.threshold[,1] == "TRUE", , drop = FALSE]
+      unwant.cells <- row.names(unwant.cells)
+    } else {
+#      unwant.cells <- names(test.threshold)[apply(test.threshold, 
+#                                                  2, function(x) all(x == "TRUE"))]
+      unwant.cells <- names(test.threshold)[apply(test.threshold, 
+                                                  2, function(x) sum(x == "TRUE")/length(x) >= 0.6)]
+    }
+  
+    # impute the expression data with a very low number for the cells that will be removed 
+    filtered.pathway[, unwant.cells] <- 0
+  
+    return(filtered.pathway)
+    }
 
 }
 
@@ -250,7 +256,7 @@ I will have to make 2 lists: one contains the selected cells; the other one cont
 ```{r selecting cells}
 
 # filtered cells will be for picking the cells to use
-filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.6, 0.8))
+filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.4, 0.6))
 names(filtered.reactomes) <- sub(pattern = "Reactome.", replacement = "", x = essential$Pathway)
 
 filtered.cells <- filtered.reactomes
@@ -268,7 +274,8 @@ filtered.cells <- filtered.cells.sumExp %>%
 reactome.box <- ggplot(filtered.cells) +
   geom_boxplot(mapping = aes(x = Pathways, y = log10(Sum.exp))) +
   theme(axis.text.x = element_text(angle=45),
-        axis.title.x = element_blank()) 
+        axis.title.x = element_blank()) + 
+  ggtitle("Sum expression of pathway components")
 
 reactome.box
 
@@ -309,9 +316,49 @@ cleanup <- function(x) {
 }
 picked.cells.expression <- lapply(picked.cells.expression, cleanup)
 
-#write_xlsx(picked.cells.expression, "ModelCells.xlsx")
+write_xlsx(picked.cells.expression, "ModelCells.xlsx")
 
 ```
+
+Let's see where are the selected cells sitting in the essential gene expression spectrum. 
+
+```{r see where the cells are at the expression spectrum}
+
+# extract the essential genes from the whole ccle data
+pathway.genes.expression <- apply(essential, 1, filter.essential.genes)
+pathway.names <- sub(pattern = "Reactome.", replacement = "", x = essential$Pathway)
+num.of.genes <- sapply(pathway.genes.expression, nrow)
+pathway.genes.expression <- Reduce(x = pathway.genes.expression, f = function(x,y) rbind(x,y))
+names(pathway.genes.expression)[1] <- "Pathways"
+pathway.genes.expression$Pathways <- rep(pathway.names, times = num.of.genes)
+
+pathway.genes.expression <- pathway.genes.expression %>%
+  gather(key = "Cells", value = "Expression", 3:1078)
+
+# tidy up the selected cells for plotting
+selected.cells.for.plotting <- lapply(picked.cells.expression, 
+                                      function(x) filter(x, Can.be.used == "+") %>% select(1:2))
+#selected.cells.for.plotting <- lapply(selected.cells.for.plotting, function(x) names(x)[3] <- "Gene.x")
+
+num.of.cells <- sapply(selected.cells.for.plotting, nrow)
+selected.cells.for.plotting <- Reduce(x = selected.cells.for.plotting, f = function(x,y) rbind(x,y))
+selected.cells.for.plotting$Pathways <- rep(pathway.names, times = num.of.cells)
+selected.cells.for.plotting <- selected.cells.for.plotting %>%
+  select(-Can.be.used) %>%
+  left_join(., pathway.genes.expression, by = c("Cells", "Pathways"))
+  
+# plot
+p <- ggplot() +
+  geom_boxplot(data = pathway.genes.expression, mapping = aes(x = Pathways, y = log10(Expression))) +
+  geom_point(data = selected.cells.for.plotting, 
+               mapping = aes(x = factor(Pathways), y = log10(Expression),
+                             colour = Cells)) +
+  xlab("Expression of pathway marker genes")
+
+p
+
+```
+
 
 ```{r}
 
