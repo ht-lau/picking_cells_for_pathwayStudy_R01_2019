@@ -31,6 +31,7 @@ library(tidyverse)
 library(ggthemes)
 library(ggpubr)
 library(readxl)
+library(writexl)
 library(qdapTools)  # required to turn the gene.list into df, list2df()
 library(VennDiagram)
 library(colorRamps)
@@ -156,7 +157,6 @@ sum(reactome.genes %in% tcga.genes)
 sum(tcga.genes %in% reactome.genes)
 ```
 
-
 ```{r match the signaling component and calculate the sum of expressions, echo=FALSE}
 ########
 # this part save the output, so I don't have to re-load the big data frame again
@@ -179,6 +179,12 @@ for (i in 1:length(gene.list)) {
 # rename of the dfs in the list with each respective signaling pathway
 names(ccle.pathways) <- names(gene.list)
 
+```
+
+Write a function to select cells as the models for pathways. The cells have to express the essential pathway component(s). For example, EGFR will have to express for cell lines used as EGFR signaling model; any of the FGFRs have to express for the FGFR signaling model cells. I initially think that the essentail component(s) have to be highly expressed. However, when I think about it more, I should actually choose the cell lines with a moderate expression. The reason is that I don't want the kinases to drive the signal transduction by auto-phosphorylation. 
+
+```{r cell selecting function}
+
 # I made a table containing the essential genes in each pathway, e.g. EGFR in EGF signaling
 essential <- read.delim("signaling_genes/essential_each_pathway.txt", stringsAsFactors = FALSE)
 
@@ -187,8 +193,9 @@ essential <- read.delim("signaling_genes/essential_each_pathway.txt", stringsAsF
 # Input argument will be the essential gene data frame
 # The expression data (ccle.pathways) is already in the function 
 filter.essential.genes <- function(essential.df,        # essential genes df
-                                   retain.percentile    # a length-of-two vector with 
-                                                        # the lower and upper expression to be kept
+                                   retain.percentile = NULL    # a length-of-two vector with 
+                                                               # the lower and upper expression to be kept
+                                                               # NULL will output the expression of the essential genes
                                    ) { 
   pathway <- essential.df["Pathway"]
   essential.gene <- essential.df["Gene"]
@@ -200,57 +207,176 @@ filter.essential.genes <- function(essential.df,        # essential genes df
   essential.gene.expression <- filtered.pathway[grepl(x = filtered.pathway$Gene.names,
                                                       pattern = essential.gene), ]
   
-  # I think the cells should be expressing the essential genes, but not over-expressing. 
-  # Like EGFR will auto-phosphorylate then it will be very hard to turn off the signal.
-  # I will test, and remove the cells that are not within the expression range.
   
-  # t(apply()) here because i want to fill two columns. 
-  # If I don't t(), apply() will fill up percent.5 before percent.6,
-  # meaning that percent.5 will have 50 %-tile and 60 %-tile of gene 1 in row 1 and row 2
-  # then gene 2 in row 3 and row 4, etc
-  essential.gene.expression[, c("low.bound", "hi.bound")] <- t(apply(essential.gene.expression[, 3:1078],
-                                                                    1, quantile, probs = retain.percentile))
-  # Test expression that are out of range
-  test.threshold <- as.data.frame(apply(essential.gene.expression[, 3:1078, drop = FALSE], 2,
-                                        function(x) x < essential.gene.expression$low.bound |
-                                          x > essential.gene.expression$hi.bound))
-  
-  # The test was to see what genes are out of the target range,
-  # so TRUE will be things that I don't want, i.e. extract cell lines to remove
-  
-  # The problem is that apply() turn the 1 row data frames into 1 column and n rows df...
-  # So I have to make a if... else to test and fix it
-  if (ncol(test.threshold) < 2) {
-    unwant.cells <- test.threshold[test.threshold[,1] == "TRUE", , drop = FALSE]
-    unwant.cells <- row.names(unwant.cells)
+  if (length(retain.percentile) == 0) {
+    return(essential.gene.expression)
   } else {
-    unwant.cells <- names(test.threshold)[apply(test.threshold, 
-                                                2, function(x) all(x == "TRUE"))]
-  }
+    # I think the cells should be expressing the essential genes, but not over-expressing. 
+    # Like EGFR will auto-phosphorylate then it will be very hard to turn off the signal.
+    # I will test, and remove the cells that are not within the expression range.
   
-  # impute the expression data with a very low number for the cells that will be removed 
-  filtered.pathway[, unwant.cells] <- 0
+    # t(apply()) here because i want to fill two columns. 
+    # If I don't t(), apply() will fill up percent.5 before percent.6,
+    # meaning that percent.5 will have 50 %-tile and 60 %-tile of gene 1 in row 1 and row 2
+    # then gene 2 in row 3 and row 4, etc
+    essential.gene.expression[, c("low.bound", "hi.bound")] <- t(apply(essential.gene.expression[, 3:1078],
+                                                                      1, quantile, probs = retain.percentile))
+    # Test expression that are out of range
+    test.threshold <- as.data.frame(apply(essential.gene.expression[, 3:1078, drop = FALSE], 2,
+                                          function(x) x < essential.gene.expression$low.bound |
+                                            x > essential.gene.expression$hi.bound))
+  
+    # The test was to see what genes are out of the target range,
+    # so TRUE will be things that I don't want, i.e. extract cell lines to remove
+  
+    # The problem is that apply() turn the 1 row data frames into 1 column and n rows df...
+    # So I have to make a if... else to test and fix it
+    if (ncol(test.threshold) < 2) {
+      unwant.cells <- test.threshold[test.threshold[,1] == "TRUE", , drop = FALSE]
+      unwant.cells <- row.names(unwant.cells)
+    } else {
+#      unwant.cells <- names(test.threshold)[apply(test.threshold, 
+#                                                  2, function(x) all(x == "TRUE"))]
+      unwant.cells <- names(test.threshold)[apply(test.threshold, 
+                                                  2, function(x) sum(x == "TRUE")/length(x) >= 0.6)]
+    }
+  
+    # impute the expression data with a very low number for the cells that will be removed 
+    filtered.pathway[, unwant.cells] <- 0
+  
+    return(filtered.pathway)
+    }
 
-  return(filtered.pathway)
 }
+
+```
+
+I will have to make 2 lists: one contains the selected cells; the other one contains most of the cells. The second list is for mapping where the selected cells sit in the expression spectra. 
+
+```{r selecting cells}
+
+# filtered cells will be for picking the cells to use
+filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.4, 0.6))
+names(filtered.reactomes) <- sub(pattern = "Reactome.", replacement = "", x = essential$Pathway)
+
+filtered.cells <- filtered.reactomes
+
+filtered.cells <- lapply(filtered.cells, FUN = select, 3:1078)
+filtered.cells.sumExp <- lapply(filtered.cells, function(x) data.frame(Sums = colSums(x)))
+
+filtered.cells.sumExp <- Reduce(x = filtered.cells.sumExp, f = function(x,y) cbind(x,y))
+names(filtered.cells.sumExp) <- names(filtered.reactomes)
+
+filtered.cells <- filtered.cells.sumExp %>% 
+  gather(key = "Pathways", value = "Sum.exp") %>%
+  filter(Sum.exp != 0)
+
+reactome.box <- ggplot(filtered.cells) +
+  geom_boxplot(mapping = aes(x = Pathways, y = log10(Sum.exp))) +
+  theme(axis.text.x = element_text(angle=45),
+        axis.title.x = element_blank()) + 
+  ggtitle("Sum expression of pathway components")
+
+reactome.box
+
+data.frame(table(filtered.cells$Pathways))
+
+
+filtered.cells.sumExp$Non0 <- apply(filtered.cells.sumExp, 1, 
+                                    function(x) sum(x != 0))
+
+cells.with.six.pathways <- filtered.cells.sumExp %>% 
+  mutate(Cells = rownames(filtered.cells.sumExp)) %>%
+  filter(Non0 > 5) %>%
+  select(-Non0) %>%
+  gather(key = "Pathways", value = "Expression", -Cells) %>%
+  spread(key = Cells, value = Expression) %>%
+  rename(Gene.names = "Pathways") # I need to match the data to the sum data later, by the column names
+
+picked.cells <- rownames(filtered.cells.sumExp)[filtered.cells.sumExp$Non0 > 5]
+
+picked.cells.expression <- lapply(ccle.pathways[1:11], select, Gene.names, picked.cells)
+
+column.names <- names(cells.with.six.pathways)
+for (i in 1:11) {
+  picked.cells.expression[[i]][nrow(picked.cells.expression[[i]]) + 1, column.names] <- 
+    cells.with.six.pathways[i, ]
+}
+
+cleanup <- function(x) {
+  x <- data.frame(t(x))
+  names(x) <- unname(unlist(x[1, ]))
+  x <- x[-1,]
+  colnames(x)[ncol(x)] <- "Can.be.used"
+  x$Cells <- rownames(x)
+  x <- x[, c(ncol(x), ncol(x)-1, 1:(ncol(x)-2))]
+  x <- type.convert(x)
+  x$Can.be.used <- ifelse(x$Can.be.used == 0, "", "+")
+  return(x)
+}
+picked.cells.expression <- lapply(picked.cells.expression, cleanup)
+
+write_xlsx(picked.cells.expression, "ModelCells.xlsx")
+
+```
+
+Let's see where are the selected cells sitting in the essential gene expression spectrum. 
+
+```{r see where the cells are at the expression spectrum}
+
+# extract the essential genes from the whole ccle data
+pathway.genes.expression <- apply(essential, 1, filter.essential.genes)
+pathway.names <- sub(pattern = "Reactome.", replacement = "", x = essential$Pathway)
+num.of.genes <- sapply(pathway.genes.expression, nrow)
+pathway.genes.expression <- Reduce(x = pathway.genes.expression, f = function(x,y) rbind(x,y))
+names(pathway.genes.expression)[1] <- "Pathways"
+pathway.genes.expression$Pathways <- rep(pathway.names, times = num.of.genes)
+
+pathway.genes.expression <- pathway.genes.expression %>%
+  gather(key = "Cells", value = "Expression", 3:1078)
+
+# tidy up the selected cells for plotting
+selected.cells.for.plotting <- lapply(picked.cells.expression, 
+                                      function(x) filter(x, Can.be.used == "+") %>% select(1:2))
+#selected.cells.for.plotting <- lapply(selected.cells.for.plotting, function(x) names(x)[3] <- "Gene.x")
+
+num.of.cells <- sapply(selected.cells.for.plotting, nrow)
+selected.cells.for.plotting <- Reduce(x = selected.cells.for.plotting, f = function(x,y) rbind(x,y))
+selected.cells.for.plotting$Pathways <- rep(pathway.names, times = num.of.cells)
+selected.cells.for.plotting <- selected.cells.for.plotting %>%
+  select(-Can.be.used) %>%
+  left_join(., pathway.genes.expression, by = c("Cells", "Pathways"))
   
-filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.45, 0.55))
-names(filtered.reactomes) <- essential$Pathway
+# plot
+p <- ggplot() +
+  geom_boxplot(data = pathway.genes.expression, mapping = aes(x = Pathways, y = log10(Expression))) +
+  geom_point(data = selected.cells.for.plotting, 
+               mapping = aes(x = factor(Pathways), y = log10(Expression),
+                             colour = Cells)) +
+  xlab("Expression of pathway marker genes") +
+  theme(axis.text.x = element_text(angle=45),
+        panel.background = element_rect(colour = "black", fill = "white"))
 
-filtered.cells <- ccle.pathways
-filtered.cells[1:11] <- filtered.reactomes
+p
 
+```
+
+
+```{r}
+
+# the followings are for visualization
 # add the filtered pathways back to the ccle.pathways
 filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.2, 1))
 names(filtered.reactomes) <- essential$Pathway
 
-ccle.pathways[1:11] <- filtered.reactomes
+filtered.ccle.pathways <- ccle.pathways
+filtered.ccle.pathways[1:11] <- filtered.reactomes
 
 # remove the columns containing Ensembl IDs and gene names, so that I can do calculations
-ccle.pathways <- lapply(ccle.pathways, FUN = select, 3:1078)
+filtered.ccle.pathways <- lapply(filtered.ccle.pathways, FUN = select, 3:1078)
 
 # calculate the sums of expression of pathway component in each cell lines
-sum.gene.expression <- lapply(ccle.pathways, function(x) data.frame(Sums = colSums(x)))
+sum.gene.expression <- lapply(filtered.ccle.pathways, function(x) data.frame(Sums = colSums(x)))
 
 
 # this pretty much done with the dataframe, so I can move on to selecting the cell lines
