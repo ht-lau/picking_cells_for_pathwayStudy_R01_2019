@@ -293,6 +293,8 @@ cells.with.six.pathways <- filtered.cells.sumExp %>%
   spread(key = Cells, value = Expression) %>%
   rename(Gene.names = "Pathways") # I need to match the data to the sum data later, by the column names
 
+#write.table(filtered.cells.sumExp, "SumExpressionAllCells.txt", quote = FALSE, append = FALSE, sep = "\t")
+
 picked.cells <- rownames(filtered.cells.sumExp)[filtered.cells.sumExp$Non0 > 5]
 
 picked.cells.expression <- lapply(ccle.pathways[1:11], select, Gene.names, picked.cells)
@@ -316,7 +318,7 @@ cleanup <- function(x) {
 }
 picked.cells.expression <- lapply(picked.cells.expression, cleanup)
 
-write_xlsx(picked.cells.expression, "ModelCells.xlsx")
+#write_xlsx(picked.cells.expression, "ModelCells.xlsx")
 
 ```
 
@@ -325,10 +327,10 @@ Let's see where are the selected cells sitting in the essential gene expression 
 ```{r see where the cells are at the expression spectrum}
 
 # extract the essential genes from the whole ccle data
-pathway.genes.expression <- apply(essential, 1, filter.essential.genes)
+pathway.genes.expression.list <- apply(essential, 1, filter.essential.genes)
 pathway.names <- sub(pattern = "Reactome.", replacement = "", x = essential$Pathway)
-num.of.genes <- sapply(pathway.genes.expression, nrow)
-pathway.genes.expression <- Reduce(x = pathway.genes.expression, f = function(x,y) rbind(x,y))
+num.of.genes <- sapply(pathway.genes.expression.list, nrow)
+pathway.genes.expression <- Reduce(x = pathway.genes.expression.list, f = function(x,y) rbind(x,y))
 names(pathway.genes.expression)[1] <- "Pathways"
 pathway.genes.expression$Pathways <- rep(pathway.names, times = num.of.genes)
 
