@@ -1,8 +1,6 @@
 ---
 title: "Selecting model cell lines for studying the phosphorylation signature of signaling pathways"
-output:
-  html_document:
-    df_print: paged
+output: github_document
 ---
 
 This is the modified version of the original analysis. We applied for an R01 for studying the signature of phosphorylation pathway using the Kinobeads (Golkowski et al. 2017. JPR). We hope to find the specific phosphorylation pattern for a given signal pathway. For example, based on the RNA-seq data from CCLE and TCGA, FGFR and EGFR are often co-expressed, and in fact, a lot of the phosphorylation events are common between these two pathways. So can we deconvolute them using Kinobeads? 
@@ -318,8 +316,6 @@ p + guides(colour = FALSE)
 
 ```
 
-
-
 ```{r get the sum of marker genes expression, echo=FALSE}
 # Exported the above results. But it will probably be good to know the actual marker gene expression. So lets add it.
 
@@ -361,6 +357,12 @@ g <- ggplot() +
 
 ```
 
+The export data contains the perentile of essential gene(s) expression, -3 = 0 - 5%, -2 = <=25%, -1 = <=40%, 0 = 40% - 60%, etc. So cells with 0 of a particular pathway should be chosen for that pathway.   
+
+```{r, echo = FALSE}
+pathway.genes.group[1:3,]
+```
+
 I am wonder if there is any correlation between pathways, say FGFRs expression is correlated to EGFR expression? But no...
 
 ```{r}
@@ -368,10 +370,12 @@ I am wonder if there is any correlation between pathways, say FGFRs expression i
 pathway.genes.sum.log <- apply(pathway.genes.sum[,2:12], 2, function(x) log10(x))
 psych::pairs.panels(pathway.genes.sum.log)
 
+```
+
+```{r echo=FALSE}
 # export
 #percentile.grouping <- list(pathway.genes.sum, pathway.genes.group)
 #names(percentile.grouping) <- c("Sum.marker.genes.expression", "Percentile.group")
 #write_xlsx(percentile.grouping, "ModelCells_percentileGroups.xlsx")
-
 ```
 
