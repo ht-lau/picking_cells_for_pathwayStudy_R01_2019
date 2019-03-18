@@ -1,13 +1,15 @@
 ---
-title: "Selection of CCLE based on the sum expression of signaling components"
-output:
-  html_document:
-    df_print: paged
+title: "Selecting model cell lines for studying the phosphorylation signature of signaling pathways"
+output: github_document
 ---
 
-In the previous script, I determined that the sums normalized expression gene expression from each signaling pathway is probably the easiest way to choose what cell lines to use. The outliner cell lines can be identified using the box plot. Basically, the cell lines with a sum expression value higher than 75% quantile + 1.5 * IQR. 
+This is the modified version of the original analysis. We applied for an R01 for studying the signature of phosphorylation pathway using the Kinobeads (Golkowski et al. 2017. JPR). We hope to find the specific phosphorylation pattern for a given signal pathway. For example, based on the RNA-seq data from CCLE and TCGA, FGFR and EGFR are often co-expressed, and in fact, a lot of the phosphorylation events are common between these two pathways. So can we deconvolute them using Kinobeads? 
 
-Followings are the signaling pathways chosen. Any pathways labeled as NA is not found in Reactome, but is in the original R01 proposal. These pathways are labeled as "Reactome".
+In the first version of this R01 application, we were criticized by choosing the model cell lines arbitrarily. To solve this, I analyzed the CCLE RNA expression data and chose cell lines based on their expression level of the pathway components. The pathway information was drawn from the reactome.org. The script can be found in https://github.com/ht-lau/cells_for_pathway_analysis
+
+Fortunately, we are awarded the R01 after the revision (in a separated application cycle). To start the project, I re-visited the analysis and found that, using all of the pathway components as a guide can be a bad idea. For example, It is obvious that some of the cell lines can express the EGFR pathway components at a high level but do not express EGFR. This is also true for the other pathways. So I now think that using the expression of the essential component(s), e.g. the receptors, will be more appropriate.  
+
+Followings are the signaling pathways chosen. Description is the path to find them in reactome.org
 
 EGF: Signal Transduction, Signaling by RTKs, Signaling by EGFR
 FGF: Signal Transduction, Signaling by RTKs, Signaling by FGFR
@@ -20,11 +22,6 @@ Estrogen: Signal Transduction, Signaling by NR, ESR-mediated signaling
 Glucose: Signal Transduction, Signaling by RTK, Signaling by Insulin receptor
 Oxygen: Cell. responses to ext. stimuli, Cell. response to stress, hypoxia
 PPMs/ECM: Extracellular matrix organization, Integrin cell surface interactions
-
-The oncogenic pathways from Sanchez-Vega et. al. (2018) (PMID: 29625050) were also included in this version of the report. These are labeled as "TCGA"
-
-
-Note 03/04/2019: we got the R01, the money is smaller than we asked for because of a budget cut (?). At least the lab can survive... Anyways, in the original version of this script, I did not check whether the receptors/essential components are expressed. I do actually know that some cells with high pathway expression level do not have the, say, EGFR expressed. So this version will fix this problem.
 
 ```{r packages, message=FALSE, echo=FALSE}
 library(tidyverse)
@@ -40,18 +37,12 @@ library(gplots)
 ```
 
 ```{r reactome gene list + TCGA oncogenes, echo=FALSE}
-########
-# can skip, if I am doing the same thing, there is a break point at 
-# {r match the signaling component and calculate the sum of expressions}
-########
 
-
-# this part deal with the data I downloaded from the Reactome.
+# This part deal with the data I downloaded from the Reactome.
 # Mainly, I want to extract the genes involved in each pathway.
 # This will produce a list that I can use to match with the CCLE expression data
-
-# There is also a paper published from TCGA looking at the 
-
+# Note that these information is not used in this version, but I think it maybe valuable to keep these,
+# in case I will have to re-visit the data
 
 # read the files containing the signaling components into a list
 signaling.files <- list.files(path = "signaling_genes", pattern = "by_",
@@ -68,10 +59,9 @@ pathway.names <- lapply(signaling.files, str_sub, 20, -5)
 names(gene.list) <- pathway.names
 
 
-############################################################
 # The gene.list contains a lot of information that I don't need from the Reactome.
+# For example, metabolites involved in the pathway.
 # So write a function to clean it up.
-############################################################
 
 extract.genes <- function(x, MoleculeType, MoleculeName) {
   x <- x %>% 
@@ -85,46 +75,10 @@ extract.genes <- function(x, MoleculeType, MoleculeName) {
 gene.list <- lapply(gene.list, FUN = extract.genes)
 names(gene.list) <- str_c("Reactome.", names(gene.list))
 
-
-# check the common set between RTKs
-RTK <- gene.list[c("Reactome.EGFR", "Reactome.FGFR", "Reactome.Insulin_receptor")]
-
-EGFR.WNT <- gene.list[c("Reactome.EGFR", "Reactome.TCF_Wnt")]
-
-x <- gene.list$Reactome.TCF_Wnt[gene.list$Reactome.TCF_Wnt %in% gene.list$Reactome.EGFR]
-y <- gene.list$Reactome.EGFR[gene.list$Reactome.EGFR %in% gene.list$Reactome.TCF_Wnt]
-z <- gene.list$Reactome.EGFR[gene.list$Reactome.EGFR %in% gene.list$Reactome.FGFR]
 ```
 
+To visualize the number of genes in each pathway.
 
-```{r this is the TCGA list, echo=FALSE}
-
-################################################################
-# import of the TCGA data
-################################################################
-
-# an excel sheet, I only need the column 1 and 2, which are the pathways and genes, respectively 
-SanchezVega <- read_excel("FigS3_SanchezVega_Cell.xlsx", sheet = "Pathways") %>%
-  select(1:2)
-
-# make a vectors containing the name of the pathways
-SanchezVega.pathways <- SanchezVega$Pathway[!duplicated(SanchezVega$Pathway)]
-
-# i want to create a list of vector containing the pathway components
-tcga.gene.list <- list() # make an empty list 1st
-for (n in 1:length(SanchezVega.pathways)) {
-  tcga.gene.list[[n]] <- SanchezVega$Gene[SanchezVega$Pathway == SanchezVega.pathways[n]]
-}
-names(tcga.gene.list) <- str_c("TCGA.", SanchezVega.pathways)
-
-##########################
-# combine the TCGA and Reactome list
-##########################
-
-gene.list <- c(gene.list, tcga.gene.list)
-```
-
-There are 1326 genes in total (with duplcations) or 940 (without duplication). Among these, the TCGA data contains 310 (309) genes and Reactome contains 1016 (736 unique) genes. With 105 common genes.
 ```{r plotting the pathways, echo=FALSE}
 
 gene.list.long <- list2df(gene.list)
@@ -133,38 +87,19 @@ gene.list.long <- gene.list.long %>% separate(Pathways, into = c("Sources", "Pat
 
 ggplot(gene.list.long) +
   geom_bar(mapping = aes(x = Pathways)) +
-  facet_wrap(~ Sources) +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1),
-        panel.background = element_rect(fill = "white", colour = "grey50"))
+  theme(axis.text.x = element_text(angle = 40, hjust = 1),
+        panel.background = element_rect(fill = "white", colour = "grey50")) +
+  ylab("Gene counts") + xlab("Pathway")
 
-Reactome.vs.TCGA <- ggplot(gene.list.long) +
-  geom_bar(mapping = aes(x = Pathways)) +
-  facet_wrap(~ Sources) +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1),
-        panel.background = element_rect(fill = "white", colour = "grey50"))
-
-# see how many of the TCGA genes are actually covered in the Reactome
-
-tcga.genes <- gene.list.long$Gene.names[gene.list.long$Sources == "TCGA"]
-sum(!duplicated(tcga.genes))
-
-reactome.genes <- gene.list.long$Gene.names[gene.list.long$Sources == "Reactome"]
-sum(!duplicated(reactome.genes))
-
-x <- calculate.overlap(list(tcga.genes, reactome.genes))
-
-sum(reactome.genes %in% tcga.genes)
-sum(tcga.genes %in% reactome.genes)
 ```
 
+Load the gene expression data downloaded from CCLE. Then extract the pathway component genes with the expression data. Results in 11 list of pathway gene expression. 
+
 ```{r match the signaling component and calculate the sum of expressions, echo=FALSE}
-########
-# this part save the output, so I don't have to re-load the big data frame again
-########
 
-# import the previously produced normalized CCLE expression data
+# import the previously produced normalized CCLE expression data. DEseq2 normalized RNA-seq read counts
 nor.ccle <- read.delim("Normalized_CCLE_RNAseq.txt", header = TRUE, stringsAsFactors = FALSE)
-
+nor.ccle[1:5, 1:5]
 
 # create a new list to whole the list of df with pathway component expression values
 ccle.pathways <- list()
@@ -173,25 +108,32 @@ ccle.pathways <- list()
 # then add Ensembl IDs as the gene names
 for (i in 1:length(gene.list)) {
   ccle.pathways[[i]] <- nor.ccle[nor.ccle$Gene.names %in% gene.list[[i]],]
-  row.names(ccle.pathways[[i]]) <- ccle.pathways[[i]][,1]
+#  row.names(ccle.pathways[[i]]) <- ccle.pathways[[i]][,1]  # this line add the ensemble ID to row.names, but is not useful
 }
 
 # rename of the dfs in the list with each respective signaling pathway
 names(ccle.pathways) <- names(gene.list)
+ccle.pathways[[1]][1:5,1:5]
 
 ```
 
-Write a function to select cells as the models for pathways. The cells have to express the essential pathway component(s). For example, EGFR will have to express for cell lines used as EGFR signaling model; any of the FGFRs have to express for the FGFR signaling model cells. I initially think that the essentail component(s) have to be highly expressed. However, when I think about it more, I should actually choose the cell lines with a moderate expression. The reason is that I don't want the kinases to drive the signal transduction by auto-phosphorylation. 
+To select the cell line for studying a particular pathway, I will have to make sure that the essential pathway component(s) is expressed. For example, EGFR will have to be expressed in the cell chosen for studying the EGFR signaling; any of the FGFRs have to be expressed for the FGFR signaling model cells. My initial idea is to choose the cells with high essential gene expression. However, it may cause the pathway to be activated constitutively. To make sure the pathways are inducible thus can be controlled experimentally, I think a moderate/median expression will be more appropriate. 
+
+Write a function to do the selection.
 
 ```{r cell selecting function}
 
 # I made a table containing the essential genes in each pathway, e.g. EGFR in EGF signaling
 essential <- read.delim("signaling_genes/essential_each_pathway.txt", stringsAsFactors = FALSE)
+essential[1:5,]
 
 # write a funtion to filter out cells that do not meet a threshold expression of the essential genes
-# Will only work on the reactome pathways
-# Input argument will be the essential gene data frame
-# The expression data (ccle.pathways) is already in the function 
+# Input argument will be the essential gene data frame, from above
+# The gene expression data (ccle.pathways) is already in the function 
+# This function will,
+#   1. filter the cells, if retain.percentile is provided. Cells that do not meet the criteria will be filled with 0
+#   2. Export the expression of the essential gene(s). If retain.percentile is not provided.
+
 filter.essential.genes <- function(essential.df,        # essential genes df
                                    retain.percentile = NULL    # a length-of-two vector with 
                                                                # the lower and upper expression to be kept
@@ -251,13 +193,20 @@ filter.essential.genes <- function(essential.df,        # essential genes df
 
 ```
 
-I will have to make 2 lists: one contains the selected cells; the other one contains most of the cells. The second list is for mapping where the selected cells sit in the expression spectra. 
-
+Filter the cells. Cells that are not selected for a pathway will have gene expression of 0. 
 ```{r selecting cells}
 
-# filtered cells will be for picking the cells to use
+# filtered cells will be for picking the cells to use. 
+# Retain cells with essential gene expression between 0.4 and 0.6 percentile
 filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.4, 0.6))
 names(filtered.reactomes) <- sub(pattern = "Reactome.", replacement = "", x = essential$Pathway)
+
+filtered.reactomes[[1]][1:6, 1:6]
+
+```
+
+Visualize the pathway component expression in the selected cells. And table the number of select cell in each pathway.
+```{r plot components expression}
 
 filtered.cells <- filtered.reactomes
 
@@ -273,14 +222,18 @@ filtered.cells <- filtered.cells.sumExp %>%
 
 reactome.box <- ggplot(filtered.cells) +
   geom_boxplot(mapping = aes(x = Pathways, y = log10(Sum.exp))) +
-  theme(axis.text.x = element_text(angle=45),
-        axis.title.x = element_blank()) + 
+  theme(axis.text.x = element_text(angle=45, hjust = 1),
+        axis.title.x = element_blank(),
+        panel.background = element_rect(colour = "black", fill = "white")) + 
   ggtitle("Sum expression of pathway components")
 
 reactome.box
 
 data.frame(table(filtered.cells$Pathways))
 
+```
+
+```{r export, echo=FALSE}
 
 filtered.cells.sumExp$Non0 <- apply(filtered.cells.sumExp, 1, 
                                     function(x) sum(x != 0))
@@ -322,9 +275,9 @@ picked.cells.expression <- lapply(picked.cells.expression, cleanup)
 
 ```
 
-Let's see where are the selected cells sitting in the essential gene expression spectrum. 
+Check the expression level of essential gene(s) in the selected cells in all of the CCLE cells. Box is the expression of the essential gene(s) in all cell lines. Each coloured dot is a selected cell line. Plotted is the sum of the essential gene(s) expression, e.g. FGFR pathway has FGFR1 - FGFR4, y-axis is the sum of all FGFR expression. 
 
-```{r see where the cells are at the expression spectrum}
+```{r see where the cells are at the expression spectrum, warning=FALSE}
 
 # extract the essential genes from the whole ccle data
 pathway.genes.expression.list <- apply(essential, 1, filter.essential.genes)
@@ -356,306 +309,73 @@ p <- ggplot() +
                mapping = aes(x = factor(Pathways), y = log10(Expression),
                              colour = Cells)) +
   xlab("Expression of pathway marker genes") +
-  theme(axis.text.x = element_text(angle=45),
+  theme(axis.text.x = element_text(angle=45, hjust = 1),
         panel.background = element_rect(colour = "black", fill = "white"))
 
-p
+p + guides(colour = FALSE)
 
 ```
 
+```{r get the sum of marker genes expression, echo=FALSE}
+# Exported the above results. But it will probably be good to know the actual marker gene expression. So lets add it.
+
+pathway.genes.expression.list <- pathway.genes.expression.list # this is from above
+pathway.genes.sum <- lapply(pathway.genes.expression.list, 
+                                       function(x) data.frame(apply(x[-c(1,2)], 2, sum)))
+pathway.genes.sum <- Reduce(x = pathway.genes.sum, 
+                                       f = function(x,y) cbind(x,y))
+names(pathway.genes.sum) <- pathway.names
+pathway.genes.sum$Cells <- rownames(pathway.genes.sum)
+pathway.genes.sum <- select(pathway.genes.sum, Cells, 1:11)
+
+# get the percentile of sum expression, then group them into different classes
+get.percentile.group <- function(x) {
+  break.points <- quantile(x, probs = c(0, .05, .25, .4, .6, .75, .95, 1))
+  cut(x, 
+      breaks = break.points, 
+      labels = c(-3, -2, -1, 0, 1, 2, 3),
+      include.lowest = TRUE)            # in help, the (a,b] notation means that a is not included, 
+                                        # so for 0 - 5 % (0,0.05], lowest number is excluded, include.lowest = TRUE change that
+}
+
+# make a new df to hold the groups 
+pathway.genes.group <- pathway.genes.sum
+pathway.genes.group[, 2:12] <- apply(pathway.genes.sum[, 2:12], 2, get.percentile.group )
+pathway.genes.group$Num.of.medianExp <- apply(pathway.genes.group[,2:12], 1, 
+                                              function(x) sum(x == 0))
+
+# prepare and make the boxplot
+sum.for.plotting <- gather(pathway.genes.sum, key = "Pathways", value = "SumExp", 2:12)
+picked.cells.by.group <- pathway.genes.group$Cells[pathway.genes.group$Num.of.medianExp > 5]
+
+g <- ggplot() +
+  geom_boxplot(sum.for.plotting, mapping = aes(x = Pathways, y = log10(SumExp))) +
+  geom_point(sum.for.plotting[sum.for.plotting$Cells %in% picked.cells.by.group,],
+             mapping = aes(x = Pathways, y = log10(SumExp), colour = Cells)) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1),
+        panel.background = element_rect(colour = "black", fill = "white"))
+
+```
+
+The export data contains the perentile of essential gene(s) expression, -3 = 0 - 5%, -2 = <=25%, -1 = <=40%, 0 = 40% - 60%, etc. So cells with 0 of a particular pathway should be chosen for that pathway.   
+
+```{r, echo = FALSE}
+pathway.genes.group[1:3,]
+```
+
+I am wonder if there is any correlation between pathways, say FGFRs expression is correlated to EGFR expression? But no...
 
 ```{r}
 
-# the followings are for visualization
-# add the filtered pathways back to the ccle.pathways
-filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.2, 1))
-names(filtered.reactomes) <- essential$Pathway
-
-filtered.ccle.pathways <- ccle.pathways
-filtered.ccle.pathways[1:11] <- filtered.reactomes
-
-# remove the columns containing Ensembl IDs and gene names, so that I can do calculations
-filtered.ccle.pathways <- lapply(filtered.ccle.pathways, FUN = select, 3:1078)
-
-# calculate the sums of expression of pathway component in each cell lines
-sum.gene.expression <- lapply(filtered.ccle.pathways, function(x) data.frame(Sums = colSums(x)))
-
-
-# this pretty much done with the dataframe, so I can move on to selecting the cell lines
-# as well as data visualization
-
-# this is new to me! So I can save the list, and have a break point to clean up the rams!
-save(sum.gene.expression, file = "sum_of_expression.RData")
-```
-
-```{r loading saved R data, echo=FALSE}
-load("sum_of_expression.RData")
-```
-
-```{r calculate the quantile of each cell line with the pathway}
-
-# I originally gave Shao-En a table containing a "+" for cell lines that have a high enough 
-# expression of the pathway components. However, there is no information about the other
-# pathways. To solve this, I want to produce another table containing the quantile to show
-# where the particular cell line is sit in.
-
-# the following function basically produced a list containing the quantiles of each pathway
-# Then I just put the quantile in using if ... else statments. 
-# This is not beautiful and very stupid!!!
-add.quantile <- function(test) {
-  quantile.in.pathway <- quantile(test[,1])
-  test[,2] <- NA
-  for (i in 1:nrow(test)) {
-    if (test[i, 1] < quantile.in.pathway[[2]]) {
-      test[i, 2] <- "< 25"
-    } else if (test[i, 1] < quantile.in.pathway[[3]]) {
-      test[i, 2] <- "< 50"
-    } else if (test[i, 1] < quantile.in.pathway[[4]]) {
-      test[i, 2] <- "< 75"
-    } else {
-      test[i, 2] <- "> 75"
-    }
-    colnames(test)[2] <- "Quantile"
-  }
-  return(test)
-}
-
-sum.gene.expression <- lapply(sum.gene.expression, add.quantile)
-
-# change the name of the quantile columns
-for (i in 1:21) {
-  colnames(sum.gene.expression[[i]])[2] <- str_c("Quantile_", names(sum.gene.expression[i]))
-  colnames(sum.gene.expression[[i]])[1] <- str_c("Sum_", names(sum.gene.expression[i]))
-  # extract the cell names from row.names
-  sum.gene.expression[[i]]$Cells <- row.names(sum.gene.expression[[i]])
-}
-
-# combine all of the dfs into 1 using reduce()
-cell.pathway.sum.quantile <- reduce(sum.gene.expression, 
-                                function(df1, df2) left_join(df1, df2, by = "Cells"))
-# move the cell names to the 1st column and remove the columns containing the sum of expression
-cell.pathway.quantile <- select(cell.pathway.sum.quantile, 3, contains("Quantile"))
-
-# change to long form to help matching to the selected cell lines later
-# also correct the pathway names in the pathway column, all of them contain "Quantile_" now. 
-cell.pathway.quantile <- cell.pathway.quantile %>%
-  gather(key = "Pathways", value = "Quantiles", -Cells) %>%
-  separate(col = Pathways, into = c("crap", "Pathways"), sep = "e_") %>%
-  select(-crap)
-
-# also make another df containing the sum of component expression instead of just the quantile
-cell.pathway.sum <- select(cell.pathway.sum.quantile, 3, contains("Sum")) %>%
-  gather(key = "Pathways", value = "Sum.of.expression", -Cells) %>%
-  separate(col = Pathways, into = c("crap", "Pathways"), sep = "m_") %>%
-  select(-crap)
+pathway.genes.sum.log <- apply(pathway.genes.sum[,2:12], 2, function(x) log10(x))
+psych::pairs.panels(pathway.genes.sum.log)
 
 ```
 
-```{r calculate cut off and pick cell lines, echo=FALSE}
-# I want to pick the cut off base on the boxplot, 
-# the whisker of the boxplot is 75 % quantile + 1.5 * IQR
-
-# write a function to calculate the cut off for each pathway for picking the cells
-cal.cut.off <- function(x) {
-  # there are some imputed values and I know that it should be the min, so remove them
-  fake.number <- min(x[1][,1])
-  x[1][,1] <- ifelse(x[1][,1] == fake.number, NA, x[1][,1])
-  cut.off <- quantile(x[1][,1], 0.75, na.rm = TRUE) + 1.5 * IQR(x[1][,1], na.rm = TRUE)
-}
-
-# make the list containing the cut off values 
-cut.off.list <- lapply(sum.gene.expression, FUN = cal.cut.off)
-# turn the list into a df
-cut.off.list <- data.frame(Cut.off = unlist(cut.off.list))
-
-########
-# picking the cells here
-########
-
-# at this point, the dfs contain 2 columns, 
-# the sum of component expression and the quantile that the cell lines are sitting in each pathway
-
-# make a list of df to hold the cells
-cells.list <- list()
-
-# the for loop to get the cells. Have to use two lists for this
-# 1. the list containing the sum of gene expressions
-# 2. the list containing the cut off 
-for (i in 1:21) {
-  cells.list[[i]] <- sum.gene.expression[[i]][sum.gene.expression[[i]][,1] >= 
-                                                cut.off.list[i, 1], ,
-                                              drop = FALSE]
-  # add a column containing the pathway names, just to preserve it for later
-  cells.list[[i]][1:nrow(cells.list[[i]]), 3] <- "+"
-  colnames(cells.list[[i]])[3] <- names(sum.gene.expression[i])
-  
-  # the cell line names are the row names now, I want to convert it into a column
-  cells.list[[i]][1:nrow(cells.list[[i]]), 4] <- row.names(cells.list[[i]])
-  cells.list[[i]] <- select(cells.list[[i]], Cells = 4, 3)
-}
-
-# reduce repeat the function in a sequential manner, until it finished the list, I think
-# the input is a list, then I added the function with 2 inputs and run full_join()
-cells.list <- reduce(cells.list, function(df1, df2) full_join(df1, df2, by = "Cells"))
-
-# convert to long form to match with quantile data
-cells.list <- cells.list %>%
-  gather(key = "Pathways", value = "Picked", -Cells)
-
-# match the picked cell with the quantile information, added a column
-cells.list.quantile <- left_join(cells.list, cell.pathway.quantile, by = c("Cells", "Pathways"))
-
-# fill the NAs in the picked cells column with the quantile number, then remove the information, turn back to wide format
-cells.list.quantile <- cells.list.quantile %>%
-  mutate(Picked = ifelse(is.na(cells.list.quantile$Picked), 
-                         cells.list.quantile$Quantiles, 
-                         cells.list.quantile$Picked)) %>%
-  select(-Quantiles) %>%
-  spread(key = Pathways, value = Picked)
-
-# use str_split, because I can choose how many items the original string will be splitting into
-temp <- str_split(string = cells.list.quantile$Cells, pattern = "_", n = 2)
-temp <- data.frame(matrix(unlist(temp), ncol = 2, byrow = TRUE))
-colnames(temp)[1:2] <- c("Cell.lines", "Tissues")
-cells.list.quantile <- cbind(temp, cells.list.quantile[, 2:22])
-
-#write.table(cells.list, "Picked_cells.txt", sep = "\t",
-#            row.names = FALSE, quote = FALSE, append = FALSE)
-
-##############################
-# match picked cells with sum of expression data. SE wants to try clustering
-##############################
-
-# match the picked cell with the quantile information, added a column
-cells.list.sum <- left_join(cells.list, cell.pathway.sum, by = c("Cells", "Pathways"))
-
-# fill the NAs in the picked cells column with the quantile number, then remove the information, turn back to wide format
-cells.list.sum <- cells.list.sum %>%
-  select(-Picked) %>%
-  spread(key = Pathways, value = Sum.of.expression)
-
-# use str_split, because I can choose how many items the original string will be splitting into
-temp <- str_split(string = cells.list.sum$Cells, pattern = "_", n = 2)
-temp <- data.frame(matrix(unlist(temp), ncol = 2, byrow = TRUE))
-colnames(temp)[1:2] <- c("Cell.lines", "Tissues")
-cells.list.sum <- cbind(temp, cells.list.sum[, 2:22])
-
-#write.table(cells.list.sum, "Picked_cells_sum_expression.txt", sep = "\t",
-#            row.names = FALSE, quote = FALSE, append = FALSE)
-
-```
-
-And there are 500 cell lines from 23 tissue types
-```{r plotting cells data, echo=FALSE}
-
-tissue.types <- ggplot(cells.list.sum) +
-  geom_bar(mapping = aes(x = Tissues)) +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1),
-        panel.background = element_rect(fill = "white", colour = "grey50")) +
-  guides(fill=FALSE)
-
-tissue.types
-
-```
-
-```{r %pathway in each tissue type, echo=FALSE}
-
-# I want to see which the percentage of each pathway in each tissue type
-
-# change the list into a long form
-cells.list.long <- cells.list %>%
-  separate(Cells, into = c("Cell.lines", "Tissues"), sep = "_", n = 2) %>%
-  filter(!is.na(Picked))
-
-
-# then get a count table for the cell lines, basically how many cell line is in each pathway in each tissue type
-x <- data.frame(table(cells.list.long[, 2:3]))
-
-# then group the data by tissue type and calculate the percentage of pathway
-y <- group_by(x, Tissues) %>% mutate(Percent = Freq/sum(Freq) * 100)
-
-# Clean up the table
-z <- y %>% mutate(Percent = ifelse(Percent == 0, NA, Percent)) %>%
-  select(-Freq) %>%
-  spread(key = Pathways, value = Percent) 
-
-# plot it out
-percent_of_pathway <- ggplot(y) +
-  geom_bar(mapping = aes(x = Tissues, y = Percent, fill = Pathways), stat = "identity") +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1),
-        panel.background = element_rect(fill = "white")) +
-  scale_fill_manual(values = colorRampPalette(brewer.pal(9, "Set1"))(23)) 
-
-percent_of_pathway
-
-```
-
-
-Following is the example for how cell lines are picked based on their expression level of the pathway components.
-```{r select cells and data visualisation, echo=FALSE}
-
-# take EGF signaling out, I want to use it as an example to show the way we select cells
-egf <- sum.gene.expression$Reactome.EGFR
-
-# add a column just for the plotting
-egf$xaxis <- 1:nrow(egf) 
-egf$box.axis <- "EGF"
-
-# calculate the cut off, which should be 75 % quantile + 1.5 x IQR
-fake.value <- min(egf$Sum_Reactome.EGFR)
-Sums <- egf$Sum_Reactome.EGFR
-Sums <- ifelse(Sums == fake.value, NA, Sums)
-cut.off <- quantile(Sums, 0.75, na.rm = TRUE) + 1.5 * IQR(Sums, na.rm = TRUE)
-# then separate the data to 2 groups based on the cut off
-egf$Picked <- egf$Sum_Reactome.EGFR >= cut.off
-
-# I want to see if I can do a scatter plot with boxplot next to it, which require the ggpubr
-scatter.plot <- ggscatter(egf, 
-                          x = "xaxis", y = "Sum_Reactome.EGFR", 
-                          color = "Picked", palette = c("Grey", "Red"))
-
-# the boxplot 
-box <- ggboxplot(egf, x = "box.axis", y = "Sum_Reactome.EGFR", 
-                 alpha = 0.5, 
-                 fill = "grey") + clean_theme()
-
-combine.plot <- ggarrange(scatter.plot, box,
-          ncol = 2, align = "h",
-          widths = c(9, 1), heights = c(1,1),
-          common.legend = TRUE)
-
-combine.plot
-
-```
-
-To make a heatmap to visualize the picks
-
-```{r}
-
-# just so that I don't have to go back up to find the name
-cell.pathway.sum <- cell.pathway.sum # this hold the cells with the sum of expression
-
-# spread the cells 
-for.heatmap <- cell.pathway.sum %>%
-  mutate(Sum.of.expression = log10(Sum.of.expression)) %>%
-  filter(str_detect(Pathways, "Reactome")) %>% 
-  separate(Pathways, into = c("meh", "Pathways")) %>%
-  select(-meh) %>%
-  spread(key = Pathways, value = Sum.of.expression)
-
-# write a function to remove the lowest number, scale and then impute with 0
-
-scale.impute <- function(x) {
-  x <- ifelse(x == min(x), NA, x)
-  scale.x <- scale(x)
-  scale.x <- ifelse(is.na(scale.x), 0, scale.x)
-}
-
-for.heatmap[, -1] <- apply(as.matrix(for.heatmap[, -1]), 2, scale.impute)
-
-heatmap.2(t(for.heatmap[, -1]), 
-          trace = "none",
-          col = rev(redblue(30)))
-
+```{r echo=FALSE}
+# export
+#percentile.grouping <- list(pathway.genes.sum, pathway.genes.group)
+#names(percentile.grouping) <- c("Sum.marker.genes.expression", "Percentile.group")
+#write_xlsx(percentile.grouping, "ModelCells_percentileGroups.xlsx")
 ```
 
