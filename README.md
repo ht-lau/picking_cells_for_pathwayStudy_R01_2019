@@ -9,7 +9,8 @@ Fortunately, we are awarded the R01 after the revision (in a separated applicati
 
 Followings are the signaling pathways chosen. Description is the path to find them in reactome.org
 
-EGF: Signal Transduction, Signaling by RTKs, Signaling by EGFR FGF: Signal Transduction, Signaling by RTKs, Signaling by FGFR HGF: Signal Transduction, Signaling by RTKs, Signaling by MET TGFb: Signal Transduction, Signaling by TGF-beta, Signaling by TGF-beta receptor IL6: Immune Sys, Cytokine Signaling, Signaling by IL, IL-6 WNTs: Signal Transduction, Signaling by WNT, TCF dependent signaling in response to WNT SHH: Signal Transduction, Signaling by Hedgehog Estrogen: Signal Transduction, Signaling by NR, ESR-mediated signaling Glucose: Signal Transduction, Signaling by RTK, Signaling by Insulin receptor Oxygen: Cell. responses to ext. stimuli, Cell. response to stress, hypoxia PPMs/ECM: Extracellular matrix organization, Integrin cell surface interactions
+EGF: Signal Transduction, Signaling by RTKs, Signaling by EGFR \n
+FGF: Signal Transduction, Signaling by RTKs, Signaling by FGFR HGF: Signal Transduction, Signaling by RTKs, Signaling by MET TGFb: Signal Transduction, Signaling by TGF-beta, Signaling by TGF-beta receptor IL6: Immune Sys, Cytokine Signaling, Signaling by IL, IL-6 WNTs: Signal Transduction, Signaling by WNT, TCF dependent signaling in response to WNT SHH: Signal Transduction, Signaling by Hedgehog Estrogen: Signal Transduction, Signaling by NR, ESR-mediated signaling Glucose: Signal Transduction, Signaling by RTK, Signaling by Insulin receptor Oxygen: Cell. responses to ext. stimuli, Cell. response to stress, hypoxia PPMs/ECM: Extracellular matrix organization, Integrin cell surface interactions
 
 To visualize the number of genes in each pathway.
 
