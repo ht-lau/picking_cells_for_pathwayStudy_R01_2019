@@ -1,9 +1,15 @@
 ---
-title: "Selection of CCLE based on the sum expression of signaling components"
+title: "Selecting model cell lines for studying the phosphorylation signature of signaling pathways"
 output:
   html_document:
     df_print: paged
 ---
+
+This is the modified version of the original analysis. We applied for an R01 for studying the signature of phosphorylation pathway using the Kinobeads (Golkowski et al. 2017. JPR). We hope to find the specific phosphorylation pattern for a given signal pathway. For example, based on the RNA-seq data from CCLE and TCGA, FGFR and EGFR are often co-expressed, and in fact, a lot of the phosphorylation events are common between these two pathways. So can we deconvolute them using Kinobeads? 
+
+In the first version of this R01 application, we were criticized by choosing the model cell lines arbitrarily. To solve this, I analyzed the CCLE RNA expression data and chose cell lines based on their expression level of the pathway components. The pathway information was drawn from the reactome.org. The script can be found in https://github.com/ht-lau/cells_for_pathway_analysis
+
+
 
 In the previous script, I determined that the sums normalized expression gene expression from each signaling pathway is probably the easiest way to choose what cell lines to use. The outliner cell lines can be identified using the box plot. Basically, the cell lines with a sum expression value higher than 75% quantile + 1.5 * IQR. 
 
@@ -363,299 +369,54 @@ p
 
 ```
 
+Exported the above results. But it will probably be good to know the actual marker gene expression. So lets add it.
 
-```{r}
+```{r get the sum of marker genes expression}
 
-# the followings are for visualization
-# add the filtered pathways back to the ccle.pathways
-filtered.reactomes <- apply(essential, 1, filter.essential.genes, retain.percentile = c(0.2, 1))
-names(filtered.reactomes) <- essential$Pathway
+pathway.genes.expression.list <- pathway.genes.expression.list # this is from above
+pathway.genes.sum <- lapply(pathway.genes.expression.list, 
+                                       function(x) data.frame(apply(x[-c(1,2)], 2, sum)))
+pathway.genes.sum <- Reduce(x = pathway.genes.sum, 
+                                       f = function(x,y) cbind(x,y))
+names(pathway.genes.sum) <- pathway.names
+pathway.genes.sum$Cells <- rownames(pathway.genes.sum)
+pathway.genes.sum <- select(pathway.genes.sum, Cells, 1:11)
 
-filtered.ccle.pathways <- ccle.pathways
-filtered.ccle.pathways[1:11] <- filtered.reactomes
-
-# remove the columns containing Ensembl IDs and gene names, so that I can do calculations
-filtered.ccle.pathways <- lapply(filtered.ccle.pathways, FUN = select, 3:1078)
-
-# calculate the sums of expression of pathway component in each cell lines
-sum.gene.expression <- lapply(filtered.ccle.pathways, function(x) data.frame(Sums = colSums(x)))
-
-
-# this pretty much done with the dataframe, so I can move on to selecting the cell lines
-# as well as data visualization
-
-# this is new to me! So I can save the list, and have a break point to clean up the rams!
-save(sum.gene.expression, file = "sum_of_expression.RData")
-```
-
-```{r loading saved R data, echo=FALSE}
-load("sum_of_expression.RData")
-```
-
-```{r calculate the quantile of each cell line with the pathway}
-
-# I originally gave Shao-En a table containing a "+" for cell lines that have a high enough 
-# expression of the pathway components. However, there is no information about the other
-# pathways. To solve this, I want to produce another table containing the quantile to show
-# where the particular cell line is sit in.
-
-# the following function basically produced a list containing the quantiles of each pathway
-# Then I just put the quantile in using if ... else statments. 
-# This is not beautiful and very stupid!!!
-add.quantile <- function(test) {
-  quantile.in.pathway <- quantile(test[,1])
-  test[,2] <- NA
-  for (i in 1:nrow(test)) {
-    if (test[i, 1] < quantile.in.pathway[[2]]) {
-      test[i, 2] <- "< 25"
-    } else if (test[i, 1] < quantile.in.pathway[[3]]) {
-      test[i, 2] <- "< 50"
-    } else if (test[i, 1] < quantile.in.pathway[[4]]) {
-      test[i, 2] <- "< 75"
-    } else {
-      test[i, 2] <- "> 75"
-    }
-    colnames(test)[2] <- "Quantile"
-  }
-  return(test)
+# get the percentile of sum expression, then group them into different classes
+get.percentile.group <- function(x) {
+  break.points <- quantile(x, probs = c(0, .05, .25, .4, .6, .75, .95, 1))
+  cut(x, 
+      breaks = break.points, 
+      labels = c(-3, -2, -1, 0, 1, 2, 3),
+      include.lowest = TRUE)            # in help, the (a,b] notation means that a is not included, 
+                                        # so for 0 - 5 % (0,0.05], lowest number is excluded, include.lowest = TRUE change that
 }
 
-sum.gene.expression <- lapply(sum.gene.expression, add.quantile)
+# make a new df to hold the groups 
+pathway.genes.group <- pathway.genes.sum
+pathway.genes.group[, 2:12] <- apply(pathway.genes.sum[, 2:12], 2, get.percentile.group )
+pathway.genes.group$Num.of.medianExp <- apply(pathway.genes.group[,2:12], 1, 
+                                              function(x) sum(x == 0))
 
-# change the name of the quantile columns
-for (i in 1:21) {
-  colnames(sum.gene.expression[[i]])[2] <- str_c("Quantile_", names(sum.gene.expression[i]))
-  colnames(sum.gene.expression[[i]])[1] <- str_c("Sum_", names(sum.gene.expression[i]))
-  # extract the cell names from row.names
-  sum.gene.expression[[i]]$Cells <- row.names(sum.gene.expression[[i]])
-}
+# prepare and make the boxplot
+sum.for.plotting <- gather(pathway.genes.sum, key = "Pathways", value = "SumExp", 2:12)
+picked.cells.by.group <- pathway.genes.group$Cells[pathway.genes.group$Num.of.medianExp > 5]
 
-# combine all of the dfs into 1 using reduce()
-cell.pathway.sum.quantile <- reduce(sum.gene.expression, 
-                                function(df1, df2) left_join(df1, df2, by = "Cells"))
-# move the cell names to the 1st column and remove the columns containing the sum of expression
-cell.pathway.quantile <- select(cell.pathway.sum.quantile, 3, contains("Quantile"))
+g <- ggplot() +
+  geom_boxplot(sum.for.plotting, mapping = aes(x = Pathways, y = log10(SumExp))) +
+  geom_point(sum.for.plotting[sum.for.plotting$Cells %in% picked.cells.by.group,],
+             mapping = aes(x = Pathways, y = log10(SumExp), colour = Cells)) +
+  theme(axis.text.x = element_text(angle = 30),
+        panel.background = element_rect(colour = "black", fill = "white"))
 
-# change to long form to help matching to the selected cell lines later
-# also correct the pathway names in the pathway column, all of them contain "Quantile_" now. 
-cell.pathway.quantile <- cell.pathway.quantile %>%
-  gather(key = "Pathways", value = "Quantiles", -Cells) %>%
-  separate(col = Pathways, into = c("crap", "Pathways"), sep = "e_") %>%
-  select(-crap)
+# I am wondering if there is any correlation between pathways, but no
+pathway.genes.sum.log <- apply(pathway.genes.sum[,2:12], 2, function(x) log10(x))
+psych::pairs.panels(pathway.genes.sum.log)
 
-# also make another df containing the sum of component expression instead of just the quantile
-cell.pathway.sum <- select(cell.pathway.sum.quantile, 3, contains("Sum")) %>%
-  gather(key = "Pathways", value = "Sum.of.expression", -Cells) %>%
-  separate(col = Pathways, into = c("crap", "Pathways"), sep = "m_") %>%
-  select(-crap)
-
-```
-
-```{r calculate cut off and pick cell lines, echo=FALSE}
-# I want to pick the cut off base on the boxplot, 
-# the whisker of the boxplot is 75 % quantile + 1.5 * IQR
-
-# write a function to calculate the cut off for each pathway for picking the cells
-cal.cut.off <- function(x) {
-  # there are some imputed values and I know that it should be the min, so remove them
-  fake.number <- min(x[1][,1])
-  x[1][,1] <- ifelse(x[1][,1] == fake.number, NA, x[1][,1])
-  cut.off <- quantile(x[1][,1], 0.75, na.rm = TRUE) + 1.5 * IQR(x[1][,1], na.rm = TRUE)
-}
-
-# make the list containing the cut off values 
-cut.off.list <- lapply(sum.gene.expression, FUN = cal.cut.off)
-# turn the list into a df
-cut.off.list <- data.frame(Cut.off = unlist(cut.off.list))
-
-########
-# picking the cells here
-########
-
-# at this point, the dfs contain 2 columns, 
-# the sum of component expression and the quantile that the cell lines are sitting in each pathway
-
-# make a list of df to hold the cells
-cells.list <- list()
-
-# the for loop to get the cells. Have to use two lists for this
-# 1. the list containing the sum of gene expressions
-# 2. the list containing the cut off 
-for (i in 1:21) {
-  cells.list[[i]] <- sum.gene.expression[[i]][sum.gene.expression[[i]][,1] >= 
-                                                cut.off.list[i, 1], ,
-                                              drop = FALSE]
-  # add a column containing the pathway names, just to preserve it for later
-  cells.list[[i]][1:nrow(cells.list[[i]]), 3] <- "+"
-  colnames(cells.list[[i]])[3] <- names(sum.gene.expression[i])
-  
-  # the cell line names are the row names now, I want to convert it into a column
-  cells.list[[i]][1:nrow(cells.list[[i]]), 4] <- row.names(cells.list[[i]])
-  cells.list[[i]] <- select(cells.list[[i]], Cells = 4, 3)
-}
-
-# reduce repeat the function in a sequential manner, until it finished the list, I think
-# the input is a list, then I added the function with 2 inputs and run full_join()
-cells.list <- reduce(cells.list, function(df1, df2) full_join(df1, df2, by = "Cells"))
-
-# convert to long form to match with quantile data
-cells.list <- cells.list %>%
-  gather(key = "Pathways", value = "Picked", -Cells)
-
-# match the picked cell with the quantile information, added a column
-cells.list.quantile <- left_join(cells.list, cell.pathway.quantile, by = c("Cells", "Pathways"))
-
-# fill the NAs in the picked cells column with the quantile number, then remove the information, turn back to wide format
-cells.list.quantile <- cells.list.quantile %>%
-  mutate(Picked = ifelse(is.na(cells.list.quantile$Picked), 
-                         cells.list.quantile$Quantiles, 
-                         cells.list.quantile$Picked)) %>%
-  select(-Quantiles) %>%
-  spread(key = Pathways, value = Picked)
-
-# use str_split, because I can choose how many items the original string will be splitting into
-temp <- str_split(string = cells.list.quantile$Cells, pattern = "_", n = 2)
-temp <- data.frame(matrix(unlist(temp), ncol = 2, byrow = TRUE))
-colnames(temp)[1:2] <- c("Cell.lines", "Tissues")
-cells.list.quantile <- cbind(temp, cells.list.quantile[, 2:22])
-
-#write.table(cells.list, "Picked_cells.txt", sep = "\t",
-#            row.names = FALSE, quote = FALSE, append = FALSE)
-
-##############################
-# match picked cells with sum of expression data. SE wants to try clustering
-##############################
-
-# match the picked cell with the quantile information, added a column
-cells.list.sum <- left_join(cells.list, cell.pathway.sum, by = c("Cells", "Pathways"))
-
-# fill the NAs in the picked cells column with the quantile number, then remove the information, turn back to wide format
-cells.list.sum <- cells.list.sum %>%
-  select(-Picked) %>%
-  spread(key = Pathways, value = Sum.of.expression)
-
-# use str_split, because I can choose how many items the original string will be splitting into
-temp <- str_split(string = cells.list.sum$Cells, pattern = "_", n = 2)
-temp <- data.frame(matrix(unlist(temp), ncol = 2, byrow = TRUE))
-colnames(temp)[1:2] <- c("Cell.lines", "Tissues")
-cells.list.sum <- cbind(temp, cells.list.sum[, 2:22])
-
-#write.table(cells.list.sum, "Picked_cells_sum_expression.txt", sep = "\t",
-#            row.names = FALSE, quote = FALSE, append = FALSE)
-
-```
-
-And there are 500 cell lines from 23 tissue types
-```{r plotting cells data, echo=FALSE}
-
-tissue.types <- ggplot(cells.list.sum) +
-  geom_bar(mapping = aes(x = Tissues)) +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1),
-        panel.background = element_rect(fill = "white", colour = "grey50")) +
-  guides(fill=FALSE)
-
-tissue.types
-
-```
-
-```{r %pathway in each tissue type, echo=FALSE}
-
-# I want to see which the percentage of each pathway in each tissue type
-
-# change the list into a long form
-cells.list.long <- cells.list %>%
-  separate(Cells, into = c("Cell.lines", "Tissues"), sep = "_", n = 2) %>%
-  filter(!is.na(Picked))
-
-
-# then get a count table for the cell lines, basically how many cell line is in each pathway in each tissue type
-x <- data.frame(table(cells.list.long[, 2:3]))
-
-# then group the data by tissue type and calculate the percentage of pathway
-y <- group_by(x, Tissues) %>% mutate(Percent = Freq/sum(Freq) * 100)
-
-# Clean up the table
-z <- y %>% mutate(Percent = ifelse(Percent == 0, NA, Percent)) %>%
-  select(-Freq) %>%
-  spread(key = Pathways, value = Percent) 
-
-# plot it out
-percent_of_pathway <- ggplot(y) +
-  geom_bar(mapping = aes(x = Tissues, y = Percent, fill = Pathways), stat = "identity") +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1),
-        panel.background = element_rect(fill = "white")) +
-  scale_fill_manual(values = colorRampPalette(brewer.pal(9, "Set1"))(23)) 
-
-percent_of_pathway
-
-```
-
-
-Following is the example for how cell lines are picked based on their expression level of the pathway components.
-```{r select cells and data visualisation, echo=FALSE}
-
-# take EGF signaling out, I want to use it as an example to show the way we select cells
-egf <- sum.gene.expression$Reactome.EGFR
-
-# add a column just for the plotting
-egf$xaxis <- 1:nrow(egf) 
-egf$box.axis <- "EGF"
-
-# calculate the cut off, which should be 75 % quantile + 1.5 x IQR
-fake.value <- min(egf$Sum_Reactome.EGFR)
-Sums <- egf$Sum_Reactome.EGFR
-Sums <- ifelse(Sums == fake.value, NA, Sums)
-cut.off <- quantile(Sums, 0.75, na.rm = TRUE) + 1.5 * IQR(Sums, na.rm = TRUE)
-# then separate the data to 2 groups based on the cut off
-egf$Picked <- egf$Sum_Reactome.EGFR >= cut.off
-
-# I want to see if I can do a scatter plot with boxplot next to it, which require the ggpubr
-scatter.plot <- ggscatter(egf, 
-                          x = "xaxis", y = "Sum_Reactome.EGFR", 
-                          color = "Picked", palette = c("Grey", "Red"))
-
-# the boxplot 
-box <- ggboxplot(egf, x = "box.axis", y = "Sum_Reactome.EGFR", 
-                 alpha = 0.5, 
-                 fill = "grey") + clean_theme()
-
-combine.plot <- ggarrange(scatter.plot, box,
-          ncol = 2, align = "h",
-          widths = c(9, 1), heights = c(1,1),
-          common.legend = TRUE)
-
-combine.plot
-
-```
-
-To make a heatmap to visualize the picks
-
-```{r}
-
-# just so that I don't have to go back up to find the name
-cell.pathway.sum <- cell.pathway.sum # this hold the cells with the sum of expression
-
-# spread the cells 
-for.heatmap <- cell.pathway.sum %>%
-  mutate(Sum.of.expression = log10(Sum.of.expression)) %>%
-  filter(str_detect(Pathways, "Reactome")) %>% 
-  separate(Pathways, into = c("meh", "Pathways")) %>%
-  select(-meh) %>%
-  spread(key = Pathways, value = Sum.of.expression)
-
-# write a function to remove the lowest number, scale and then impute with 0
-
-scale.impute <- function(x) {
-  x <- ifelse(x == min(x), NA, x)
-  scale.x <- scale(x)
-  scale.x <- ifelse(is.na(scale.x), 0, scale.x)
-}
-
-for.heatmap[, -1] <- apply(as.matrix(for.heatmap[, -1]), 2, scale.impute)
-
-heatmap.2(t(for.heatmap[, -1]), 
-          trace = "none",
-          col = rev(redblue(30)))
+# export
+#percentile.grouping <- list(pathway.genes.sum, pathway.genes.group)
+#names(percentile.grouping) <- c("Sum.marker.genes.expression", "Percentile.group")
+#write_xlsx(percentile.grouping, "ModelCells_percentileGroups.xlsx")
 
 ```
 
